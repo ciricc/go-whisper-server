@@ -1,0 +1,6 @@
+server:
+  address: ":50051"
+model:
+  path: "models/ggml-large-v3.bin"
+  language: "en"
+  sample_rate_hz: 16000

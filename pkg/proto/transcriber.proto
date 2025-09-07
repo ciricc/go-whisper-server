@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package transcriber.v1;
+
+option go_package = "github.com/ciricc/go-whisper-grpc/pkg/proto/transcriber/v1;transcriberv1";
+
+
+message TranscribeRequest {
+  string language = 1;
+  bytes wav_file = 2;
+}
+
+message Segment {
+  int64 start_ms = 1;
+  int64 end_ms = 2;
+  string text = 3;
+}
+
+service Transcriber {
+  // Bidirectional streaming: client streams PCM chunks, server streams decoded segments as they are ready
+  rpc Transcribe(TranscribeRequest) returns (stream Segment);
+}

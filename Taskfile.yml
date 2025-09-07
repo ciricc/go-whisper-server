@@ -1,0 +1,127 @@
+version: "3"
+
+vars:
+  MODEL: '{{.MODEL | default "ggml-tiny.en-q5_1.bin"}}'
+  MODEL_URL: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{{.MODEL}}"
+  WHISPER_CPP_DIR: third_party/whisper.cpp
+  WHISPER_BUILD_DIR: "{{.WHISPER_CPP_DIR}}/build"
+
+tasks:
+  default:
+    desc: "Build and run the server (with Metal if on macOS)"
+    cmds:
+      - task: run:metal
+
+  # ------------------------------------------------------------------
+  # Dependency Management & C++ Build
+  # ------------------------------------------------------------------
+
+  vendor-cpp:
+    desc: Clone the whisper.cpp repository into the third_party directory
+    cmds:
+      - |
+        # Use a lock directory to prevent race conditions from parallel task execution
+        if mkdir {{.WHISPER_CPP_DIR}}.lock 2>/dev/null; then
+          # If we acquired the lock, ensure we release it on exit
+          trap 'rmdir {{.WHISPER_CPP_DIR}}.lock' EXIT
+          
+          # Check if cloning is needed
+          if [ ! -d "{{.WHISPER_CPP_DIR}}/.git" ]; then
+            echo "INFO: Cloning whisper.cpp repository into third_party..."
+            rm -rf {{.WHISPER_CPP_DIR}}
+            git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git {{.WHISPER_CPP_DIR}}
+          fi
+        else
+          # If we failed to get the lock, wait for the other process to finish
+          echo "INFO: Waiting for another process to clone whisper.cpp..."
+          while [ -d "{{.WHISPER_CPP_DIR}}.lock" ]; do sleep 1; done
+        fi
+    status:
+      - test -d {{.WHISPER_CPP_DIR}}/.git
+
+  whisper-lib:
+    desc: Build the core C++ whisper.cpp library
+    deps: [vendor-cpp]
+    cmds:
+      - cmake -S {{.WHISPER_CPP_DIR}} -B {{.WHISPER_BUILD_DIR}} -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF
+      - cmake --build {{.WHISPER_BUILD_DIR}} --target whisper
+    status:
+      - test -f {{.WHISPER_BUILD_DIR}}/libwhisper.a
+
+  whisper-lib:metal:
+    desc: Build the core C++ whisper.cpp library with Metal support for macOS
+    deps: [vendor-cpp]
+    cmds:
+      - cmake -S {{.WHISPER_CPP_DIR}} -B {{.WHISPER_BUILD_DIR}} -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF -DGGML_METAL=ON
+      - cmake --build {{.WHISPER_BUILD_DIR}} --target whisper
+    status:
+      # Check for the metal library to confirm a metal build
+      - test -f {{.WHISPER_BUILD_DIR}}/ggml/src/libggml-metal.a
+
+  # ------------------------------------------------------------------
+  # Go Application Build
+  # ------------------------------------------------------------------
+
+  build:
+    desc: Build server
+    deps: [proto, whisper-lib]
+    cmds:
+      - |
+        set -e
+        ROOT="$(pwd)"
+        INCLUDE_FLAGS="-I${ROOT}/third_party/whisper.cpp/include -I${ROOT}/third_party/whisper.cpp/ggml/include"
+        LIB_FLAGS="-L${ROOT}/third_party/whisper.cpp/build/src -L${ROOT}/third_party/whisper.cpp/build -L${ROOT}/third_party/whisper.cpp/build/ggml/src -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-blas -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-metal -lwhisper -lggml -lggml-blas -framework Accelerate -framework Foundation"
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/server ./cmd/server
+
+  build:metal:
+    desc: Build with Metal acceleration (macOS)
+    deps: [proto, whisper-lib:metal]
+    cmds:
+      - |
+        set -e
+        ROOT="$(pwd)"
+        export GGML_METAL_PATH_RESOURCES="${ROOT}/third_party/whisper.cpp"
+        INCLUDE_FLAGS="-I${ROOT}/third_party/whisper.cpp/include -I${ROOT}/third_party/whisper.cpp/ggml/include -DGGML_USE_METAL=1"
+        LIB_FLAGS="-L${ROOT}/third_party/whisper.cpp/build/src -L${ROOT}/third_party/whisper.cpp/build -L${ROOT}/third_party/whisper.cpp/build/ggml/src -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-blas -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-metal -lwhisper -lggml -lggml-metal -lggml-blas -framework Accelerate -framework Metal -framework MetalKit -framework Foundation"
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -tags=metal -ldflags "-s -w" -o bin/server-metal ./cmd/server
+
+  # ------------------------------------------------------------------
+  # Running & Utility Tasks
+  # ------------------------------------------------------------------
+
+  run:
+    desc: Run server
+    deps: [build]
+    cmds:
+      - ./bin/server
+
+  run:metal:
+    desc: Run server with Metal build
+    deps: [build:metal]
+    cmds:
+      - ./bin/server-metal
+  setup:
+    desc: Setup the project
+    cmds:
+      - go install github.com/ggerganov/whisper.cpp/bindings/go/examples/go-model-download@latest
+
+  proto:
+    desc: Generate gRPC code
+    cmds:
+      - protoc -I pkg/proto --go_out=pkg --go-grpc_out=pkg --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative pkg/proto/transcriber.proto
+
+  download-model:
+    desc: Download model using go-model-download example CLI
+    cmds:
+      - mkdir -p models
+      - go-model-download -out ./models {{if .MODELS}}{{.MODELS}}{{else}}{{.MODEL}}{{end}}
+
+  dl:
+    desc: Alias for download-model
+    cmds:
+      - task: download-model
+
+  clean:
+    desc: Clean build artifacts and vendor directory
+    cmds:
+      - rm -rf bin vendor third_party
