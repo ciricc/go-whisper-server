@@ -2,21 +2,120 @@ syntax = "proto3";
 
 package transcriber.v1;
 
-option go_package = "github.com/ciricc/go-whisper-grpc/pkg/proto/transcriber/v1;transcriberv1";
+option go_package = "github.com/ciricc/go-whisper-server/pkg/proto/transcriber/v1;transcriberv1";
 
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
 
-message TranscribeRequest {
+// Whisper's model processing parameters
+// Source: https://github.com/ggml-org/whisper.cpp/blob/master/bindings/go/params.go
+// Default value for the each parameter is as whisper's default.
+// Default values: https://github.com/ggml-org/whisper.cpp/blob/edea8a9c3cf0eb7676dcdb604991eb2f95c3d984/src/whisper.cpp#L5923
+message WhisperParams {
+  // Split on word
+  google.protobuf.BoolValue split_on_word = 1;
+  
+  // Beam size 
+  google.protobuf.Int32Value beam_size = 2;
+  
+  // Temperature
+  google.protobuf.FloatValue temperature = 3;
+
+  // Temperature fallback
+  google.protobuf.FloatValue temperature_fallback = 4;
+
+  // Max tokens per segment
+  google.protobuf.Int32Value max_tokens_per_segment = 5;
+
+  // Token threshold
+  google.protobuf.FloatValue token_threshold = 6;
+  
+  // Token sum threshold
+  google.protobuf.FloatValue token_sum_threshold = 7;
+  
+  // Whether to translate the text or not
+  google.protobuf.BoolValue translate = 8;
+  
+  // Whether to diarize the text or not
+  // It does not work if the model is not trained with the diarization data
+  // compatible with tinydiarize plugin
+  // Source: https://github.com/ggml-org/whisper.cpp/pull/1058/files
+  google.protobuf.BoolValue diarize = 9;
+  
+  // Whether to use VAD or not
+  // If VAD is enabled, the server will only transcribe the speech segments
+  // and ignore the silence segments
+  google.protobuf.BoolValue vad = 10;
+  
+  // Max segment length in characters
+  google.protobuf.Int32Value max_segment_length = 11;
+  
+  // Whether to return the token timestamps or not
+  // If token timestamps are enabled, the server will transcribe the 
+  // text over the token level
+  google.protobuf.BoolValue token_timestamps = 12;
+  
+  // Offset of the audio file
+  // It is used to skip the first N seconds of the audio file
+  google.protobuf.Duration offset = 13;
+
+  // Duration of the audio file
+  // It is used to limit the duration of the audio file
+  google.protobuf.Duration duration = 14;
+  
+  // Initial prompt
+  google.protobuf.StringValue initial_prompt = 15;
+}
+
+message File {
+  oneof file {
+    bytes bytes = 1;
+    string url = 2;
+    string path = 3;
+  }
+}
+
+message TranscribeWavRequest {
+  // Which language had been spoken in the file
   string language = 1;
-  bytes wav_file = 2;
+  
+  // The WAV 16kHz file to transcribe.
+  // If the file contains bytes, it will be transcribed as is.
+  // If the file contains a URL, it will be downloaded and transcribed.
+  // If the file contains a path, it will be opened and transcribed.
+  File wav_16k_file = 2;
+
+  // Whisper parameters
+  WhisperParams whisper_params = 3;
+  
+  // Transcribe WAV parameters
+  TranscribeWavParams transcribe_wav_params = 4;
+}
+
+message TranscribeWavParams {
+  // The window size in seconds to transcribe the audio file in chunks
+  google.protobuf.Duration window_size = 2;
 }
 
 message Segment {
-  int64 start_ms = 1;
-  int64 end_ms = 2;
+  // The start time of the segment.
+  google.protobuf.Duration start = 1;
+  
+  // The end time of the segment.
+  google.protobuf.Duration end = 2;
+
+  // The text of the segment.
   string text = 3;
+
+  // True if the next segment is predicted as a speaker turn (tinydiarize)
+  bool speaker_turn_next = 4;
 }
 
 service Transcriber {
-  // Bidirectional streaming: client streams PCM chunks, server streams decoded segments as they are ready
-  rpc Transcribe(TranscribeRequest) returns (stream Segment);
+  // TranscribeWav create the transcription task working asynchronously
+  // It will return a stream of segments as they are ready
+  rpc TranscribeWav(TranscribeWavRequest) returns (stream Segment);
+  
+  // TODO: Bidirectional streaming: client streams PCM chunks, server streams decoded segments as they are ready
+  // rpc TranscribeBidirectional(stream FileChunk) returns (stream Segment);
 }

@@ -2,13 +2,15 @@
 // versions:
 // 	protoc-gen-go v1.36.8
 // 	protoc        v5.29.3
-// source: transcriber.proto
+// source: pkg/proto/transcriber.proto
 
 package transcriberv1
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
+	wrapperspb "google.golang.org/protobuf/types/known/wrapperspb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -21,29 +23,70 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type TranscribeRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Language      string                 `protobuf:"bytes,1,opt,name=language,proto3" json:"language,omitempty"`
-	WavFile       []byte                 `protobuf:"bytes,2,opt,name=wav_file,json=wavFile,proto3" json:"wav_file,omitempty"`
+// Whisper's model processing parameters
+// Source: https://github.com/ggml-org/whisper.cpp/blob/master/bindings/go/params.go
+// Default value for the each parameter is as whisper's default.
+// Default values: https://github.com/ggml-org/whisper.cpp/blob/edea8a9c3cf0eb7676dcdb604991eb2f95c3d984/src/whisper.cpp#L5923
+type WhisperParams struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Split on word
+	SplitOnWord *wrapperspb.BoolValue `protobuf:"bytes,1,opt,name=split_on_word,json=splitOnWord,proto3" json:"split_on_word,omitempty"`
+	// Beam size
+	BeamSize *wrapperspb.Int32Value `protobuf:"bytes,2,opt,name=beam_size,json=beamSize,proto3" json:"beam_size,omitempty"`
+	// Temperature
+	Temperature *wrapperspb.FloatValue `protobuf:"bytes,3,opt,name=temperature,proto3" json:"temperature,omitempty"`
+	// Temperature fallback
+	TemperatureFallback *wrapperspb.FloatValue `protobuf:"bytes,4,opt,name=temperature_fallback,json=temperatureFallback,proto3" json:"temperature_fallback,omitempty"`
+	// Max tokens per segment
+	MaxTokensPerSegment *wrapperspb.Int32Value `protobuf:"bytes,5,opt,name=max_tokens_per_segment,json=maxTokensPerSegment,proto3" json:"max_tokens_per_segment,omitempty"`
+	// Token threshold
+	TokenThreshold *wrapperspb.FloatValue `protobuf:"bytes,6,opt,name=token_threshold,json=tokenThreshold,proto3" json:"token_threshold,omitempty"`
+	// Token sum threshold
+	TokenSumThreshold *wrapperspb.FloatValue `protobuf:"bytes,7,opt,name=token_sum_threshold,json=tokenSumThreshold,proto3" json:"token_sum_threshold,omitempty"`
+	// Whether to translate the text or not
+	Translate *wrapperspb.BoolValue `protobuf:"bytes,8,opt,name=translate,proto3" json:"translate,omitempty"`
+	// Whether to diarize the text or not
+	// It does not work if the model is not trained with the diarization data
+	// compatible with tinydiarize plugin
+	// Source: https://github.com/ggml-org/whisper.cpp/pull/1058/files
+	Diarize *wrapperspb.BoolValue `protobuf:"bytes,9,opt,name=diarize,proto3" json:"diarize,omitempty"`
+	// Whether to use VAD or not
+	// If VAD is enabled, the server will only transcribe the speech segments
+	// and ignore the silence segments
+	Vad *wrapperspb.BoolValue `protobuf:"bytes,10,opt,name=vad,proto3" json:"vad,omitempty"`
+	// Max segment length in characters
+	MaxSegmentLength *wrapperspb.Int32Value `protobuf:"bytes,11,opt,name=max_segment_length,json=maxSegmentLength,proto3" json:"max_segment_length,omitempty"`
+	// Whether to return the token timestamps or not
+	// If token timestamps are enabled, the server will transcribe the
+	// text over the token level
+	TokenTimestamps *wrapperspb.BoolValue `protobuf:"bytes,12,opt,name=token_timestamps,json=tokenTimestamps,proto3" json:"token_timestamps,omitempty"`
+	// Offset of the audio file
+	// It is used to skip the first N seconds of the audio file
+	Offset *durationpb.Duration `protobuf:"bytes,13,opt,name=offset,proto3" json:"offset,omitempty"`
+	// Duration of the audio file
+	// It is used to limit the duration of the audio file
+	Duration *durationpb.Duration `protobuf:"bytes,14,opt,name=duration,proto3" json:"duration,omitempty"`
+	// Initial prompt
+	InitialPrompt *wrapperspb.StringValue `protobuf:"bytes,15,opt,name=initial_prompt,json=initialPrompt,proto3" json:"initial_prompt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TranscribeRequest) Reset() {
-	*x = TranscribeRequest{}
-	mi := &file_transcriber_proto_msgTypes[0]
+func (x *WhisperParams) Reset() {
+	*x = WhisperParams{}
+	mi := &file_pkg_proto_transcriber_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TranscribeRequest) String() string {
+func (x *WhisperParams) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TranscribeRequest) ProtoMessage() {}
+func (*WhisperParams) ProtoMessage() {}
 
-func (x *TranscribeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_transcriber_proto_msgTypes[0]
+func (x *WhisperParams) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_proto_transcriber_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -54,37 +97,351 @@ func (x *TranscribeRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TranscribeRequest.ProtoReflect.Descriptor instead.
-func (*TranscribeRequest) Descriptor() ([]byte, []int) {
-	return file_transcriber_proto_rawDescGZIP(), []int{0}
+// Deprecated: Use WhisperParams.ProtoReflect.Descriptor instead.
+func (*WhisperParams) Descriptor() ([]byte, []int) {
+	return file_pkg_proto_transcriber_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *TranscribeRequest) GetLanguage() string {
+func (x *WhisperParams) GetSplitOnWord() *wrapperspb.BoolValue {
+	if x != nil {
+		return x.SplitOnWord
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetBeamSize() *wrapperspb.Int32Value {
+	if x != nil {
+		return x.BeamSize
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetTemperature() *wrapperspb.FloatValue {
+	if x != nil {
+		return x.Temperature
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetTemperatureFallback() *wrapperspb.FloatValue {
+	if x != nil {
+		return x.TemperatureFallback
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetMaxTokensPerSegment() *wrapperspb.Int32Value {
+	if x != nil {
+		return x.MaxTokensPerSegment
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetTokenThreshold() *wrapperspb.FloatValue {
+	if x != nil {
+		return x.TokenThreshold
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetTokenSumThreshold() *wrapperspb.FloatValue {
+	if x != nil {
+		return x.TokenSumThreshold
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetTranslate() *wrapperspb.BoolValue {
+	if x != nil {
+		return x.Translate
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetDiarize() *wrapperspb.BoolValue {
+	if x != nil {
+		return x.Diarize
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetVad() *wrapperspb.BoolValue {
+	if x != nil {
+		return x.Vad
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetMaxSegmentLength() *wrapperspb.Int32Value {
+	if x != nil {
+		return x.MaxSegmentLength
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetTokenTimestamps() *wrapperspb.BoolValue {
+	if x != nil {
+		return x.TokenTimestamps
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetOffset() *durationpb.Duration {
+	if x != nil {
+		return x.Offset
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetDuration() *durationpb.Duration {
+	if x != nil {
+		return x.Duration
+	}
+	return nil
+}
+
+func (x *WhisperParams) GetInitialPrompt() *wrapperspb.StringValue {
+	if x != nil {
+		return x.InitialPrompt
+	}
+	return nil
+}
+
+type File struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to File:
+	//
+	//	*File_Bytes
+	//	*File_Url
+	//	*File_Path
+	File          isFile_File `protobuf_oneof:"file"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *File) Reset() {
+	*x = File{}
+	mi := &file_pkg_proto_transcriber_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *File) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*File) ProtoMessage() {}
+
+func (x *File) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_proto_transcriber_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use File.ProtoReflect.Descriptor instead.
+func (*File) Descriptor() ([]byte, []int) {
+	return file_pkg_proto_transcriber_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *File) GetFile() isFile_File {
+	if x != nil {
+		return x.File
+	}
+	return nil
+}
+
+func (x *File) GetBytes() []byte {
+	if x != nil {
+		if x, ok := x.File.(*File_Bytes); ok {
+			return x.Bytes
+		}
+	}
+	return nil
+}
+
+func (x *File) GetUrl() string {
+	if x != nil {
+		if x, ok := x.File.(*File_Url); ok {
+			return x.Url
+		}
+	}
+	return ""
+}
+
+func (x *File) GetPath() string {
+	if x != nil {
+		if x, ok := x.File.(*File_Path); ok {
+			return x.Path
+		}
+	}
+	return ""
+}
+
+type isFile_File interface {
+	isFile_File()
+}
+
+type File_Bytes struct {
+	Bytes []byte `protobuf:"bytes,1,opt,name=bytes,proto3,oneof"`
+}
+
+type File_Url struct {
+	Url string `protobuf:"bytes,2,opt,name=url,proto3,oneof"`
+}
+
+type File_Path struct {
+	Path string `protobuf:"bytes,3,opt,name=path,proto3,oneof"`
+}
+
+func (*File_Bytes) isFile_File() {}
+
+func (*File_Url) isFile_File() {}
+
+func (*File_Path) isFile_File() {}
+
+type TranscribeWavRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Which language had been spoken in the file
+	Language string `protobuf:"bytes,1,opt,name=language,proto3" json:"language,omitempty"`
+	// The WAV 16kHz file to transcribe.
+	// If the file contains bytes, it will be transcribed as is.
+	// If the file contains a URL, it will be downloaded and transcribed.
+	// If the file contains a path, it will be opened and transcribed.
+	Wav_16KFile *File `protobuf:"bytes,2,opt,name=wav_16k_file,json=wav16kFile,proto3" json:"wav_16k_file,omitempty"`
+	// Whisper parameters
+	WhisperParams *WhisperParams `protobuf:"bytes,3,opt,name=whisper_params,json=whisperParams,proto3" json:"whisper_params,omitempty"`
+	// Transcribe WAV parameters
+	TranscribeWavParams *TranscribeWavParams `protobuf:"bytes,4,opt,name=transcribe_wav_params,json=transcribeWavParams,proto3" json:"transcribe_wav_params,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *TranscribeWavRequest) Reset() {
+	*x = TranscribeWavRequest{}
+	mi := &file_pkg_proto_transcriber_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TranscribeWavRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TranscribeWavRequest) ProtoMessage() {}
+
+func (x *TranscribeWavRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_proto_transcriber_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TranscribeWavRequest.ProtoReflect.Descriptor instead.
+func (*TranscribeWavRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_proto_transcriber_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *TranscribeWavRequest) GetLanguage() string {
 	if x != nil {
 		return x.Language
 	}
 	return ""
 }
 
-func (x *TranscribeRequest) GetWavFile() []byte {
+func (x *TranscribeWavRequest) GetWav_16KFile() *File {
 	if x != nil {
-		return x.WavFile
+		return x.Wav_16KFile
+	}
+	return nil
+}
+
+func (x *TranscribeWavRequest) GetWhisperParams() *WhisperParams {
+	if x != nil {
+		return x.WhisperParams
+	}
+	return nil
+}
+
+func (x *TranscribeWavRequest) GetTranscribeWavParams() *TranscribeWavParams {
+	if x != nil {
+		return x.TranscribeWavParams
+	}
+	return nil
+}
+
+type TranscribeWavParams struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The window size in seconds to transcribe the audio file in chunks
+	WindowSize    *durationpb.Duration `protobuf:"bytes,2,opt,name=window_size,json=windowSize,proto3" json:"window_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TranscribeWavParams) Reset() {
+	*x = TranscribeWavParams{}
+	mi := &file_pkg_proto_transcriber_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TranscribeWavParams) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TranscribeWavParams) ProtoMessage() {}
+
+func (x *TranscribeWavParams) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_proto_transcriber_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TranscribeWavParams.ProtoReflect.Descriptor instead.
+func (*TranscribeWavParams) Descriptor() ([]byte, []int) {
+	return file_pkg_proto_transcriber_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *TranscribeWavParams) GetWindowSize() *durationpb.Duration {
+	if x != nil {
+		return x.WindowSize
 	}
 	return nil
 }
 
 type Segment struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	StartMs       int64                  `protobuf:"varint,1,opt,name=start_ms,json=startMs,proto3" json:"start_ms,omitempty"`
-	EndMs         int64                  `protobuf:"varint,2,opt,name=end_ms,json=endMs,proto3" json:"end_ms,omitempty"`
-	Text          string                 `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The start time of the segment.
+	Start *durationpb.Duration `protobuf:"bytes,1,opt,name=start,proto3" json:"start,omitempty"`
+	// The end time of the segment.
+	End *durationpb.Duration `protobuf:"bytes,2,opt,name=end,proto3" json:"end,omitempty"`
+	// The text of the segment.
+	Text string `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
+	// True if the next segment is predicted as a speaker turn (tinydiarize)
+	SpeakerTurnNext bool `protobuf:"varint,4,opt,name=speaker_turn_next,json=speakerTurnNext,proto3" json:"speaker_turn_next,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Segment) Reset() {
 	*x = Segment{}
-	mi := &file_transcriber_proto_msgTypes[1]
+	mi := &file_pkg_proto_transcriber_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -96,7 +453,7 @@ func (x *Segment) String() string {
 func (*Segment) ProtoMessage() {}
 
 func (x *Segment) ProtoReflect() protoreflect.Message {
-	mi := &file_transcriber_proto_msgTypes[1]
+	mi := &file_pkg_proto_transcriber_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -109,21 +466,21 @@ func (x *Segment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Segment.ProtoReflect.Descriptor instead.
 func (*Segment) Descriptor() ([]byte, []int) {
-	return file_transcriber_proto_rawDescGZIP(), []int{1}
+	return file_pkg_proto_transcriber_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *Segment) GetStartMs() int64 {
+func (x *Segment) GetStart() *durationpb.Duration {
 	if x != nil {
-		return x.StartMs
+		return x.Start
 	}
-	return 0
+	return nil
 }
 
-func (x *Segment) GetEndMs() int64 {
+func (x *Segment) GetEnd() *durationpb.Duration {
 	if x != nil {
-		return x.EndMs
+		return x.End
 	}
-	return 0
+	return nil
 }
 
 func (x *Segment) GetText() string {
@@ -133,69 +490,138 @@ func (x *Segment) GetText() string {
 	return ""
 }
 
-var File_transcriber_proto protoreflect.FileDescriptor
+func (x *Segment) GetSpeakerTurnNext() bool {
+	if x != nil {
+		return x.SpeakerTurnNext
+	}
+	return false
+}
 
-const file_transcriber_proto_rawDesc = "" +
+var File_pkg_proto_transcriber_proto protoreflect.FileDescriptor
+
+const file_pkg_proto_transcriber_proto_rawDesc = "" +
 	"\n" +
-	"\x11transcriber.proto\x12\x0etranscriber.v1\"J\n" +
-	"\x11TranscribeRequest\x12\x1a\n" +
-	"\blanguage\x18\x01 \x01(\tR\blanguage\x12\x19\n" +
-	"\bwav_file\x18\x02 \x01(\fR\awavFile\"O\n" +
-	"\aSegment\x12\x19\n" +
-	"\bstart_ms\x18\x01 \x01(\x03R\astartMs\x12\x15\n" +
-	"\x06end_ms\x18\x02 \x01(\x03R\x05endMs\x12\x12\n" +
-	"\x04text\x18\x03 \x01(\tR\x04text2Y\n" +
-	"\vTranscriber\x12J\n" +
-	"\n" +
-	"Transcribe\x12!.transcriber.v1.TranscribeRequest\x1a\x17.transcriber.v1.Segment0\x01BJZHgithub.com/ciricc/go-whisper-grpc/pkg/proto/transcriber/v1;transcriberv1b\x06proto3"
+	"\x1bpkg/proto/transcriber.proto\x12\x0etranscriber.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xdc\a\n" +
+	"\rWhisperParams\x12>\n" +
+	"\rsplit_on_word\x18\x01 \x01(\v2\x1a.google.protobuf.BoolValueR\vsplitOnWord\x128\n" +
+	"\tbeam_size\x18\x02 \x01(\v2\x1b.google.protobuf.Int32ValueR\bbeamSize\x12=\n" +
+	"\vtemperature\x18\x03 \x01(\v2\x1b.google.protobuf.FloatValueR\vtemperature\x12N\n" +
+	"\x14temperature_fallback\x18\x04 \x01(\v2\x1b.google.protobuf.FloatValueR\x13temperatureFallback\x12P\n" +
+	"\x16max_tokens_per_segment\x18\x05 \x01(\v2\x1b.google.protobuf.Int32ValueR\x13maxTokensPerSegment\x12D\n" +
+	"\x0ftoken_threshold\x18\x06 \x01(\v2\x1b.google.protobuf.FloatValueR\x0etokenThreshold\x12K\n" +
+	"\x13token_sum_threshold\x18\a \x01(\v2\x1b.google.protobuf.FloatValueR\x11tokenSumThreshold\x128\n" +
+	"\ttranslate\x18\b \x01(\v2\x1a.google.protobuf.BoolValueR\ttranslate\x124\n" +
+	"\adiarize\x18\t \x01(\v2\x1a.google.protobuf.BoolValueR\adiarize\x12,\n" +
+	"\x03vad\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.BoolValueR\x03vad\x12I\n" +
+	"\x12max_segment_length\x18\v \x01(\v2\x1b.google.protobuf.Int32ValueR\x10maxSegmentLength\x12E\n" +
+	"\x10token_timestamps\x18\f \x01(\v2\x1a.google.protobuf.BoolValueR\x0ftokenTimestamps\x121\n" +
+	"\x06offset\x18\r \x01(\v2\x19.google.protobuf.DurationR\x06offset\x125\n" +
+	"\bduration\x18\x0e \x01(\v2\x19.google.protobuf.DurationR\bduration\x12C\n" +
+	"\x0einitial_prompt\x18\x0f \x01(\v2\x1c.google.protobuf.StringValueR\rinitialPrompt\"P\n" +
+	"\x04File\x12\x16\n" +
+	"\x05bytes\x18\x01 \x01(\fH\x00R\x05bytes\x12\x12\n" +
+	"\x03url\x18\x02 \x01(\tH\x00R\x03url\x12\x14\n" +
+	"\x04path\x18\x03 \x01(\tH\x00R\x04pathB\x06\n" +
+	"\x04file\"\x89\x02\n" +
+	"\x14TranscribeWavRequest\x12\x1a\n" +
+	"\blanguage\x18\x01 \x01(\tR\blanguage\x126\n" +
+	"\fwav_16k_file\x18\x02 \x01(\v2\x14.transcriber.v1.FileR\n" +
+	"wav16kFile\x12D\n" +
+	"\x0ewhisper_params\x18\x03 \x01(\v2\x1d.transcriber.v1.WhisperParamsR\rwhisperParams\x12W\n" +
+	"\x15transcribe_wav_params\x18\x04 \x01(\v2#.transcriber.v1.TranscribeWavParamsR\x13transcribeWavParams\"Q\n" +
+	"\x13TranscribeWavParams\x12:\n" +
+	"\vwindow_size\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\n" +
+	"windowSize\"\xa7\x01\n" +
+	"\aSegment\x12/\n" +
+	"\x05start\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\x05start\x12+\n" +
+	"\x03end\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x03end\x12\x12\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\x12*\n" +
+	"\x11speaker_turn_next\x18\x04 \x01(\bR\x0fspeakerTurnNext2_\n" +
+	"\vTranscriber\x12P\n" +
+	"\rTranscribeWav\x12$.transcriber.v1.TranscribeWavRequest\x1a\x17.transcriber.v1.Segment0\x01BLZJgithub.com/ciricc/go-whisper-server/pkg/proto/transcriber/v1;transcriberv1b\x06proto3"
 
 var (
-	file_transcriber_proto_rawDescOnce sync.Once
-	file_transcriber_proto_rawDescData []byte
+	file_pkg_proto_transcriber_proto_rawDescOnce sync.Once
+	file_pkg_proto_transcriber_proto_rawDescData []byte
 )
 
-func file_transcriber_proto_rawDescGZIP() []byte {
-	file_transcriber_proto_rawDescOnce.Do(func() {
-		file_transcriber_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_transcriber_proto_rawDesc), len(file_transcriber_proto_rawDesc)))
+func file_pkg_proto_transcriber_proto_rawDescGZIP() []byte {
+	file_pkg_proto_transcriber_proto_rawDescOnce.Do(func() {
+		file_pkg_proto_transcriber_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_pkg_proto_transcriber_proto_rawDesc), len(file_pkg_proto_transcriber_proto_rawDesc)))
 	})
-	return file_transcriber_proto_rawDescData
+	return file_pkg_proto_transcriber_proto_rawDescData
 }
 
-var file_transcriber_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_transcriber_proto_goTypes = []any{
-	(*TranscribeRequest)(nil), // 0: transcriber.v1.TranscribeRequest
-	(*Segment)(nil),           // 1: transcriber.v1.Segment
+var file_pkg_proto_transcriber_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_pkg_proto_transcriber_proto_goTypes = []any{
+	(*WhisperParams)(nil),          // 0: transcriber.v1.WhisperParams
+	(*File)(nil),                   // 1: transcriber.v1.File
+	(*TranscribeWavRequest)(nil),   // 2: transcriber.v1.TranscribeWavRequest
+	(*TranscribeWavParams)(nil),    // 3: transcriber.v1.TranscribeWavParams
+	(*Segment)(nil),                // 4: transcriber.v1.Segment
+	(*wrapperspb.BoolValue)(nil),   // 5: google.protobuf.BoolValue
+	(*wrapperspb.Int32Value)(nil),  // 6: google.protobuf.Int32Value
+	(*wrapperspb.FloatValue)(nil),  // 7: google.protobuf.FloatValue
+	(*durationpb.Duration)(nil),    // 8: google.protobuf.Duration
+	(*wrapperspb.StringValue)(nil), // 9: google.protobuf.StringValue
 }
-var file_transcriber_proto_depIdxs = []int32{
-	0, // 0: transcriber.v1.Transcriber.Transcribe:input_type -> transcriber.v1.TranscribeRequest
-	1, // 1: transcriber.v1.Transcriber.Transcribe:output_type -> transcriber.v1.Segment
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+var file_pkg_proto_transcriber_proto_depIdxs = []int32{
+	5,  // 0: transcriber.v1.WhisperParams.split_on_word:type_name -> google.protobuf.BoolValue
+	6,  // 1: transcriber.v1.WhisperParams.beam_size:type_name -> google.protobuf.Int32Value
+	7,  // 2: transcriber.v1.WhisperParams.temperature:type_name -> google.protobuf.FloatValue
+	7,  // 3: transcriber.v1.WhisperParams.temperature_fallback:type_name -> google.protobuf.FloatValue
+	6,  // 4: transcriber.v1.WhisperParams.max_tokens_per_segment:type_name -> google.protobuf.Int32Value
+	7,  // 5: transcriber.v1.WhisperParams.token_threshold:type_name -> google.protobuf.FloatValue
+	7,  // 6: transcriber.v1.WhisperParams.token_sum_threshold:type_name -> google.protobuf.FloatValue
+	5,  // 7: transcriber.v1.WhisperParams.translate:type_name -> google.protobuf.BoolValue
+	5,  // 8: transcriber.v1.WhisperParams.diarize:type_name -> google.protobuf.BoolValue
+	5,  // 9: transcriber.v1.WhisperParams.vad:type_name -> google.protobuf.BoolValue
+	6,  // 10: transcriber.v1.WhisperParams.max_segment_length:type_name -> google.protobuf.Int32Value
+	5,  // 11: transcriber.v1.WhisperParams.token_timestamps:type_name -> google.protobuf.BoolValue
+	8,  // 12: transcriber.v1.WhisperParams.offset:type_name -> google.protobuf.Duration
+	8,  // 13: transcriber.v1.WhisperParams.duration:type_name -> google.protobuf.Duration
+	9,  // 14: transcriber.v1.WhisperParams.initial_prompt:type_name -> google.protobuf.StringValue
+	1,  // 15: transcriber.v1.TranscribeWavRequest.wav_16k_file:type_name -> transcriber.v1.File
+	0,  // 16: transcriber.v1.TranscribeWavRequest.whisper_params:type_name -> transcriber.v1.WhisperParams
+	3,  // 17: transcriber.v1.TranscribeWavRequest.transcribe_wav_params:type_name -> transcriber.v1.TranscribeWavParams
+	8,  // 18: transcriber.v1.TranscribeWavParams.window_size:type_name -> google.protobuf.Duration
+	8,  // 19: transcriber.v1.Segment.start:type_name -> google.protobuf.Duration
+	8,  // 20: transcriber.v1.Segment.end:type_name -> google.protobuf.Duration
+	2,  // 21: transcriber.v1.Transcriber.TranscribeWav:input_type -> transcriber.v1.TranscribeWavRequest
+	4,  // 22: transcriber.v1.Transcriber.TranscribeWav:output_type -> transcriber.v1.Segment
+	22, // [22:23] is the sub-list for method output_type
+	21, // [21:22] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
-func init() { file_transcriber_proto_init() }
-func file_transcriber_proto_init() {
-	if File_transcriber_proto != nil {
+func init() { file_pkg_proto_transcriber_proto_init() }
+func file_pkg_proto_transcriber_proto_init() {
+	if File_pkg_proto_transcriber_proto != nil {
 		return
+	}
+	file_pkg_proto_transcriber_proto_msgTypes[1].OneofWrappers = []any{
+		(*File_Bytes)(nil),
+		(*File_Url)(nil),
+		(*File_Path)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_transcriber_proto_rawDesc), len(file_transcriber_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_proto_transcriber_proto_rawDesc), len(file_pkg_proto_transcriber_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_transcriber_proto_goTypes,
-		DependencyIndexes: file_transcriber_proto_depIdxs,
-		MessageInfos:      file_transcriber_proto_msgTypes,
+		GoTypes:           file_pkg_proto_transcriber_proto_goTypes,
+		DependencyIndexes: file_pkg_proto_transcriber_proto_depIdxs,
+		MessageInfos:      file_pkg_proto_transcriber_proto_msgTypes,
 	}.Build()
-	File_transcriber_proto = out.File
-	file_transcriber_proto_goTypes = nil
-	file_transcriber_proto_depIdxs = nil
+	File_pkg_proto_transcriber_proto = out.File
+	file_pkg_proto_transcriber_proto_goTypes = nil
+	file_pkg_proto_transcriber_proto_depIdxs = nil
 }

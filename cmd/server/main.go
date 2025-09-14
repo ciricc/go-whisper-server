@@ -4,8 +4,8 @@ import (
 	"log"
 	"net"
 
-	"github.com/ciricc/go-whisper-grpc/internal/app"
-	transcriberv1 "github.com/ciricc/go-whisper-grpc/pkg/proto/transcriber/v1"
+	"github.com/ciricc/go-whisper-server/internal/app"
+	transcriberv1 "github.com/ciricc/go-whisper-server/pkg/proto/transcriber/v1"
 	"google.golang.org/grpc"
 )
 

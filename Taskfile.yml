@@ -5,6 +5,7 @@ vars:
   MODEL_URL: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{{.MODEL}}"
   WHISPER_CPP_DIR: third_party/whisper.cpp
   WHISPER_BUILD_DIR: "{{.WHISPER_CPP_DIR}}/build"
+  EASYP_BIN: '{{.EASYP_BIN | default "./bin/easyp"}}'
 
 tasks:
   default:
@@ -45,8 +46,6 @@ tasks:
     cmds:
       - cmake -S {{.WHISPER_CPP_DIR}} -B {{.WHISPER_BUILD_DIR}} -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF
       - cmake --build {{.WHISPER_BUILD_DIR}} --target whisper
-    status:
-      - test -f {{.WHISPER_BUILD_DIR}}/libwhisper.a
 
   whisper-lib:metal:
     desc: Build the core C++ whisper.cpp library with Metal support for macOS
@@ -54,17 +53,36 @@ tasks:
     cmds:
       - cmake -S {{.WHISPER_CPP_DIR}} -B {{.WHISPER_BUILD_DIR}} -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF -DGGML_METAL=ON
       - cmake --build {{.WHISPER_BUILD_DIR}} --target whisper
-    status:
-      # Check for the metal library to confirm a metal build
-      - test -f {{.WHISPER_BUILD_DIR}}/ggml/src/libggml-metal.a
 
+  whisper-lib:cuda:
+    desc: Build the core C++ whisper.cpp library with CUDA (Ubuntu)
+    deps: [vendor-cpp]
+    cmds:
+      - |
+        set -e
+        if ! command -v nvcc >/dev/null 2>&1; then
+          echo "ERROR: nvcc not found. Install CUDA toolkit before building (e.g. nvidia-cuda-toolkit or NVIDIA CUDA repo)." >&2
+          exit 1
+        fi
+        # Clean build dir to avoid stale host-compiler flags
+        # Prefer GCC-12 for nvcc host compiler to avoid GCC ABI issues
+        export CC="$(command -v gcc-12 || command -v gcc)"
+        export CXX="$(command -v g++-12 || command -v g++)"
+        cmake -S {{.WHISPER_CPP_DIR}} -B {{.WHISPER_BUILD_DIR}} \
+          -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+          -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF \
+          -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_CUDA_F16=ON \
+          -DCMAKE_CUDA_HOST_COMPILER="$(command -v g++-12 || command -v g++)" \
+          -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" \
+          -DCMAKE_VERBOSE_MAKEFILE=ON
+        cmake --build {{.WHISPER_BUILD_DIR}} --target ggml-cuda whisper -j
   # ------------------------------------------------------------------
   # Go Application Build
   # ------------------------------------------------------------------
 
   build:
     desc: Build server
-    deps: [proto, whisper-lib]
+    deps: [whisper-lib]
     cmds:
       - |
         set -e
@@ -75,7 +93,7 @@ tasks:
 
   build:metal:
     desc: Build with Metal acceleration (macOS)
-    deps: [proto, whisper-lib:metal]
+    deps: [whisper-lib:metal]
     cmds:
       - |
         set -e
@@ -84,6 +102,41 @@ tasks:
         INCLUDE_FLAGS="-I${ROOT}/third_party/whisper.cpp/include -I${ROOT}/third_party/whisper.cpp/ggml/include -DGGML_USE_METAL=1"
         LIB_FLAGS="-L${ROOT}/third_party/whisper.cpp/build/src -L${ROOT}/third_party/whisper.cpp/build -L${ROOT}/third_party/whisper.cpp/build/ggml/src -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-blas -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-metal -lwhisper -lggml -lggml-metal -lggml-blas -framework Accelerate -framework Metal -framework MetalKit -framework Foundation"
         CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -tags=metal -ldflags "-s -w" -o bin/server-metal ./cmd/server
+
+  build:cuda:deps:ubuntu:
+    desc: Install Ubuntu dependencies for CUDA and FFmpeg (requires sudo)
+    cmds:
+      - |
+        set -e
+        sudo apt update
+        sudo apt install -y build-essential cmake pkg-config \
+          nvidia-cuda-toolkit \
+          ffmpeg libavformat-dev libavcodec-dev libavdevice-dev libavfilter-dev \
+          libswresample-dev libswscale-dev libavutil-dev
+  build:cuda:
+    desc: Build server with CUDA acceleration (Ubuntu)
+    deps: [whisper-lib:cuda]
+    cmds:
+      - |
+        set -e
+        ROOT="$(pwd)"
+        CUDA_HOME="${CUDA_HOME:-$(dirname $(dirname $(command -v nvcc)))}"
+        INCLUDE_FLAGS="-I${ROOT}/third_party/whisper.cpp/include -I${ROOT}/third_party/whisper.cpp/ggml/include"
+        LIB_FLAGS="-L${ROOT}/third_party/whisper.cpp/build/src \
+        -L${ROOT}/third_party/whisper.cpp/build \
+        -L${ROOT}/third_party/whisper.cpp/build/ggml/src \
+        -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-cuda \
+        -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-cpu \
+        -L${CUDA_HOME}/lib64 \
+        -Wl,--start-group -lwhisper -lggml -lggml-cuda -lggml-cpu -Wl,--end-group \
+        -lstdc++ -lm -lpthread -ldl -fopenmp -lcuda -lcudart -lcublas -lcublasLt"
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/server-cuda ./cmd/server
+
+  run:cuda:
+    desc: Run server with CUDA build
+    deps: [build:cuda]
+    cmds:
+      - ./bin/server-cuda
 
   # ------------------------------------------------------------------
   # Running & Utility Tasks
@@ -103,18 +156,44 @@ tasks:
   setup:
     desc: Setup the project
     cmds:
+      - |
+        set -e
+        cd "$(git rev-parse --show-toplevel)"
+        mkdir -p bin
+        if [ ! -x "{{.EASYP_BIN}}" ] && ! command -v easyp >/dev/null 2>&1; then
+          echo "INFO: Installing EasyP into ./bin"
+          curl -fsSL https://easyp.tech/install.sh | bash -s -- -b ./bin
+        else
+          echo "INFO: EasyP already installed"
+        fi
       - go install github.com/ggerganov/whisper.cpp/bindings/go/examples/go-model-download@latest
 
-  proto:
-    desc: Generate gRPC code
+  easyp:
+    desc: Generate protobuf code with EasyP
     cmds:
-      - protoc -I pkg/proto --go_out=pkg --go-grpc_out=pkg --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative pkg/proto/transcriber.proto
+      - |
+        set -e
+        cd "$(git rev-parse --show-toplevel)"
+        if [ -x "{{.EASYP_BIN}}" ]; then
+          EASYP="{{.EASYP_BIN}}"
+        else
+          EASYP="$(command -v easyp || true)"
+        fi
+        if [ -z "$EASYP" ]; then
+          echo "ERROR: easyp not found. Run 'task setup' first." >&2
+          exit 1
+        fi
+        "$EASYP" generate
 
   download-model:
     desc: Download model using go-model-download example CLI
     cmds:
       - mkdir -p models
       - go-model-download -out ./models {{if .MODELS}}{{.MODELS}}{{else}}{{.MODEL}}{{end}}
+  archive:
+    desc: Archive the project
+    cmds:
+      - git archive --output whisper.zip HEAD
 
   dl:
     desc: Alias for download-model
@@ -124,4 +203,4 @@ tasks:
   clean:
     desc: Clean build artifacts and vendor directory
     cmds:
-      - rm -rf bin vendor third_party
+      - rm -rf bin vendor third_party github.com

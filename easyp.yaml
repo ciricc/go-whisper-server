@@ -1,0 +1,25 @@
+lint:
+  use:
+    - DEFAULT
+  enum_zero_value_suffix: _NONE
+  service_suffix: API
+  ignore: []
+  except: []
+  allow_comment_ignores: false
+  ignore_only: {}
+deps: []
+generate:
+  inputs:
+    - directory: pkg/proto
+  plugins:
+    - name: go
+      out: .
+      opts:
+        module: github.com/ciricc/go-whisper-server
+    - name: go-grpc
+      out: .
+      opts:
+        module: github.com/ciricc/go-whisper-server
+breaking:
+  ignore: []
+  against_git_ref: master

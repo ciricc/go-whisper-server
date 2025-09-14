@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v5.29.3
-// source: transcriber.proto
+// source: pkg/proto/transcriber.proto
 
 package transcriberv1
 
@@ -19,15 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Transcriber_Transcribe_FullMethodName = "/transcriber.v1.Transcriber/Transcribe"
+	Transcriber_TranscribeWav_FullMethodName = "/transcriber.v1.Transcriber/TranscribeWav"
 )
 
 // TranscriberClient is the client API for Transcriber service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type TranscriberClient interface {
-	// Bidirectional streaming: client streams PCM chunks, server streams decoded segments as they are ready
-	Transcribe(ctx context.Context, in *TranscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Segment], error)
+	// TranscribeWav create the transcription task working asynchronously
+	// It will return a stream of segments as they are ready
+	TranscribeWav(ctx context.Context, in *TranscribeWavRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Segment], error)
 }
 
 type transcriberClient struct {
@@ -38,13 +39,13 @@ func NewTranscriberClient(cc grpc.ClientConnInterface) TranscriberClient {
 	return &transcriberClient{cc}
 }
 
-func (c *transcriberClient) Transcribe(ctx context.Context, in *TranscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Segment], error) {
+func (c *transcriberClient) TranscribeWav(ctx context.Context, in *TranscribeWavRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Segment], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Transcriber_ServiceDesc.Streams[0], Transcriber_Transcribe_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Transcriber_ServiceDesc.Streams[0], Transcriber_TranscribeWav_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[TranscribeRequest, Segment]{ClientStream: stream}
+	x := &grpc.GenericClientStream[TranscribeWavRequest, Segment]{ClientStream: stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -55,14 +56,15 @@ func (c *transcriberClient) Transcribe(ctx context.Context, in *TranscribeReques
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Transcriber_TranscribeClient = grpc.ServerStreamingClient[Segment]
+type Transcriber_TranscribeWavClient = grpc.ServerStreamingClient[Segment]
 
 // TranscriberServer is the server API for Transcriber service.
 // All implementations must embed UnimplementedTranscriberServer
 // for forward compatibility.
 type TranscriberServer interface {
-	// Bidirectional streaming: client streams PCM chunks, server streams decoded segments as they are ready
-	Transcribe(*TranscribeRequest, grpc.ServerStreamingServer[Segment]) error
+	// TranscribeWav create the transcription task working asynchronously
+	// It will return a stream of segments as they are ready
+	TranscribeWav(*TranscribeWavRequest, grpc.ServerStreamingServer[Segment]) error
 	mustEmbedUnimplementedTranscriberServer()
 }
 
@@ -73,8 +75,8 @@ type TranscriberServer interface {
 // pointer dereference when methods are called.
 type UnimplementedTranscriberServer struct{}
 
-func (UnimplementedTranscriberServer) Transcribe(*TranscribeRequest, grpc.ServerStreamingServer[Segment]) error {
-	return status.Errorf(codes.Unimplemented, "method Transcribe not implemented")
+func (UnimplementedTranscriberServer) TranscribeWav(*TranscribeWavRequest, grpc.ServerStreamingServer[Segment]) error {
+	return status.Errorf(codes.Unimplemented, "method TranscribeWav not implemented")
 }
 func (UnimplementedTranscriberServer) mustEmbedUnimplementedTranscriberServer() {}
 func (UnimplementedTranscriberServer) testEmbeddedByValue()                     {}
@@ -97,16 +99,16 @@ func RegisterTranscriberServer(s grpc.ServiceRegistrar, srv TranscriberServer) {
 	s.RegisterService(&Transcriber_ServiceDesc, srv)
 }
 
-func _Transcriber_Transcribe_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(TranscribeRequest)
+func _Transcriber_TranscribeWav_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(TranscribeWavRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(TranscriberServer).Transcribe(m, &grpc.GenericServerStream[TranscribeRequest, Segment]{ServerStream: stream})
+	return srv.(TranscriberServer).TranscribeWav(m, &grpc.GenericServerStream[TranscribeWavRequest, Segment]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Transcriber_TranscribeServer = grpc.ServerStreamingServer[Segment]
+type Transcriber_TranscribeWavServer = grpc.ServerStreamingServer[Segment]
 
 // Transcriber_ServiceDesc is the grpc.ServiceDesc for Transcriber service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -117,10 +119,10 @@ var Transcriber_ServiceDesc = grpc.ServiceDesc{
 	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "Transcribe",
-			Handler:       _Transcriber_Transcribe_Handler,
+			StreamName:    "TranscribeWav",
+			Handler:       _Transcriber_TranscribeWav_Handler,
 			ServerStreams: true,
 		},
 	},
-	Metadata: "transcriber.proto",
+	Metadata: "pkg/proto/transcriber.proto",
 }

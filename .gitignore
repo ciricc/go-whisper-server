@@ -2,3 +2,4 @@ bin/
 models/
 third_party/
 vendor/
+testdata/

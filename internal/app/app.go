@@ -1,18 +1,21 @@
 package app
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 
-	"github.com/ciricc/go-whisper-grpc/internal/config"
-	"github.com/ciricc/go-whisper-grpc/internal/server"
-	wh "github.com/ciricc/go-whisper-grpc/internal/whisper"
+	"github.com/ciricc/go-whisper-server/internal/config"
+	"github.com/ciricc/go-whisper-server/internal/server"
+	"github.com/ciricc/go-whisper-server/internal/service/transcribe_svc"
+	"github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper"
 )
 
 type Application struct {
-	Config config.Config
-	Engine *wh.Engine
-	Server *server.TranscriberServer
+	Config        config.Config
+	Server        *server.TranscriberServer
+	whisperModel  *whisper.ModelContext
+	transcribeSvc transcribe_svc.TranscribeService
 }
 
 func New() (*Application, error) {
@@ -21,20 +24,26 @@ func New() (*Application, error) {
 		return nil, err
 	}
 
-	engine, err := wh.NewEngine(cfg.Model.Path)
+	model, err := whisper.NewModelContext(cfg.Model.Path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create whisper model: %w", err)
 	}
 
+	svc := transcribe_svc.NewTranscribeService(model)
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	grpcServer := server.NewTranscriberServer(log, svc)
 
-	grpcServer := server.NewTranscriberServer(engine, log)
-	return &Application{Config: cfg, Engine: engine, Server: grpcServer}, nil
+	return &Application{
+		Config:        cfg,
+		Server:        grpcServer,
+		whisperModel:  model,
+		transcribeSvc: svc,
+	}, nil
 }
 
 func (a *Application) Close() error {
-	if a.Engine != nil {
-		_ = a.Engine.Close()
+	if a.whisperModel != nil {
+		_ = a.whisperModel.Close()
 	}
 	return nil
 }

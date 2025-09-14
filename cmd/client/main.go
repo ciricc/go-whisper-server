@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,18 +11,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ciricc/go-whisper-grpc/internal/config"
-	transcriberv1 "github.com/ciricc/go-whisper-grpc/pkg/proto/transcriber/v1"
+	"github.com/ciricc/go-whisper-server/internal/config"
+	transcriberv1 "github.com/ciricc/go-whisper-server/pkg/proto/transcriber/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 func main() {
 	var (
 		cfgPath  = flag.String("config", "config.yaml", "path to config.yaml for server address")
-		wavPath  = flag.String("wav", "testdata/audio.wav", "path to 16-bit PCM WAV mono file")
-		dialAddr = flag.String("addr", "", "override server address (e.g., :50051)")
+		wavPath  = flag.String("wav", "testdata/output.wav", "path to 16-bit PCM WAV mono file")
+		dialAddr = flag.String("addr", "localhost:50051", "override server address (e.g., :50051)")
 	)
+
 	flag.Parse()
 
 	cfg, err := config.Load(*cfgPath)
@@ -41,37 +42,37 @@ func main() {
 	}
 	defer f.Close()
 
-	// info, dataStart, err := parseWAVHeader(f)
-	// if err != nil {
-	// 	log.Fatalf("parse wav: %v", err)
-	// }
-	// if info.BitsPerSample != 16 || info.NumChannels != 1 {
-	// 	log.Printf("warning: expected mono 16-bit PCM wav, got %d ch, %d bits", info.NumChannels, info.BitsPerSample)
-	// }
-	// if cfg.Model.SampleRateHz > 0 && info.SampleRate != cfg.Model.SampleRateHz {
-	// 	log.Printf("warning: wav sample rate %d != model sample rate %d; results may degrade (no resample)", info.SampleRate, cfg.Model.SampleRateHz)
-	// }
-	// if _, err := f.Seek(dataStart, io.SeekStart); err != nil {
-	// 	log.Fatalf("seek data: %v", err)
-	// }
-	pcm, err := io.ReadAll(f)
+	wavData, err := io.ReadAll(f)
 	if err != nil {
 		log.Fatalf("read wav data: %v", err)
 	}
 
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	client, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("dial: %v", err)
+		log.Fatalf("new client: %v", err)
 	}
-	defer conn.Close()
+	defer client.Close()
 
-	client := transcriberv1.NewTranscriberClient(conn)
+	transcriber := transcriberv1.NewTranscriberClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	resp, err := client.Transcribe(ctx, &transcriberv1.TranscribeRequest{
-		Language: "ru",
-		WavFile:  pcm,
+	resp, err := transcriber.TranscribeWav(ctx, &transcriberv1.TranscribeWavRequest{
+		Language: "en",
+		Wav_16KFile: &transcriberv1.File{
+			File: &transcriberv1.File_Bytes{
+				Bytes: wavData,
+			},
+		},
+		WhisperParams: &transcriberv1.WhisperParams{
+			SplitOnWord:         wrapperspb.Bool(true),
+			BeamSize:            wrapperspb.Int32(20),
+			Temperature:         wrapperspb.Float(0.0),
+			TemperatureFallback: wrapperspb.Float(0.2),
+			MaxTokensPerSegment: wrapperspb.Int32(128),
+			TokenThreshold:      wrapperspb.Float(0.2),
+			Translate:           wrapperspb.Bool(false),
+		},
 	})
 	if err != nil {
 		log.Fatalf("Transcribe: %v", err)
@@ -82,56 +83,16 @@ func main() {
 		if errors.Is(rerr, io.EOF) {
 			break
 		}
+
 		if rerr != nil {
 			log.Fatalf("recv: %v", rerr)
 		}
-		fmt.Printf("[%6d -> %6d] %s\n", seg.StartMs, seg.EndMs, seg.Text)
-	}
-}
 
-type wavInfo struct {
-	AudioFormat   uint16
-	NumChannels   uint16
-	SampleRate    int
-	BitsPerSample int
-}
-
-func parseWAVHeader(r io.ReadSeeker) (wavInfo, int64, error) {
-	var info wavInfo
-	var hdr [12]byte
-	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return info, 0, fmt.Errorf("read riff: %w", err)
-	}
-	if string(hdr[0:4]) != "RIFF" || string(hdr[8:12]) != "WAVE" {
-		return info, 0, fmt.Errorf("not a WAVE RIFF file")
-	}
-	for {
-		var chunkHdr [8]byte
-		if _, err := io.ReadFull(r, chunkHdr[:]); err != nil {
-			return info, 0, fmt.Errorf("read chunk: %w", err)
-		}
-		ckID := string(chunkHdr[0:4])
-		ckSize := int64(binary.LittleEndian.Uint32(chunkHdr[4:8]))
-		switch ckID {
-		case "fmt ":
-			data := make([]byte, ckSize)
-			if _, err := io.ReadFull(r, data); err != nil {
-				return info, 0, fmt.Errorf("read fmt: %w", err)
-			}
-			if len(data) < 16 {
-				return info, 0, fmt.Errorf("fmt too short")
-			}
-			info.AudioFormat = binary.LittleEndian.Uint16(data[0:2])
-			info.NumChannels = binary.LittleEndian.Uint16(data[2:4])
-			info.SampleRate = int(binary.LittleEndian.Uint32(data[4:8]))
-			info.BitsPerSample = int(binary.LittleEndian.Uint16(data[14:16]))
-		case "data":
-			pos, _ := r.Seek(0, io.SeekCurrent)
-			return info, pos, nil
-		default:
-			if _, err := r.Seek(ckSize, io.SeekCurrent); err != nil {
-				return info, 0, fmt.Errorf("skip %s: %w", ckID, err)
-			}
-		}
+		fmt.Printf(
+			"[%6d -> %6d] %s\n",
+			seg.GetStart().AsDuration().Milliseconds(),
+			seg.GetEnd().AsDuration().Milliseconds(),
+			seg.GetText(),
+		)
 	}
 }
