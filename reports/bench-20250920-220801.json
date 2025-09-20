@@ -1,0 +1,35 @@
+{
+  "timestamp_rfc3339": "2025-09-20T22:10:01+03:00",
+  "label": "",
+  "use_gpu": true,
+  "gpu_device": 0,
+  "gpu_name": "Apple M3 Pro",
+  "model_path": "models/ggml-large-v3-turbo.bin",
+  "model_language": "ru",
+  "wav_path": "testdata/out.wav",
+  "wav_sha256": "61c37b2d5301c352714fa22dad4a7b5bbf5d616144a66120984b761489450cc0",
+  "wav_duration_seconds": 1392.2104375,
+  "threads": 12,
+  "sampling_strategy": "greedy",
+  "parameters": {
+    "no_context": "true",
+    "split_on_word": "true"
+  },
+  "runs": [
+    {
+      "processing_seconds": 117.927432083,
+      "real_time_factor": 0.08470517739743638,
+      "segments_decoded": 47
+    }
+  ],
+  "avg_processing_seconds": 117.927432083,
+  "avg_real_time_factor": 0.08470517739743638,
+  "wall_seconds_per_audio_hour": 304.938638630771,
+  "peak_rss_mb": 1701.15625,
+  "cpu_model": "Apple M3 Pro",
+  "cpu_num_logical": 12,
+  "os": "darwin",
+  "arch": "arm64",
+  "monthly_price_usd": 66,
+  "cost_per_audio_hour_usd": 0.007764641261431667
+}

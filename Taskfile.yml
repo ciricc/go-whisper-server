@@ -81,18 +81,31 @@ tasks:
   # ------------------------------------------------------------------
 
   build:
-    desc: Build server
+    desc: Build all apps (server, mic, research)
     deps: [whisper-lib]
     cmds:
       - |
         set -e
         ROOT="$(pwd)"
         INCLUDE_FLAGS="-I${ROOT}/third_party/whisper.cpp/include -I${ROOT}/third_party/whisper.cpp/ggml/include"
-        LIB_FLAGS="-L${ROOT}/third_party/whisper.cpp/build/src -L${ROOT}/third_party/whisper.cpp/build -L${ROOT}/third_party/whisper.cpp/build/ggml/src -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-blas -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-metal -lwhisper -lggml -lggml-blas -framework Accelerate -framework Foundation"
+        OS_NAME="$(uname -s)"
+        if [ "$OS_NAME" = "Darwin" ]; then
+          LIB_FLAGS="-L${ROOT}/third_party/whisper.cpp/build/src -L${ROOT}/third_party/whisper.cpp/build -L${ROOT}/third_party/whisper.cpp/build/ggml/src -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-blas -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-metal -lwhisper -lggml -lggml-blas -framework Accelerate -framework Foundation"
+        else
+          LIB_FLAGS="-L${ROOT}/third_party/whisper.cpp/build/src \
+          -L${ROOT}/third_party/whisper.cpp/build \
+          -L${ROOT}/third_party/whisper.cpp/build/ggml/src \
+          -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-cpu \
+          -Wl,--start-group -lwhisper -lggml -lggml-cpu -Wl,--end-group \
+          -lstdc++ -lm -lpthread -ldl -fopenmp"
+        fi
         CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/server ./cmd/server
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/mic ./cmd/mic
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/research ./cmd/research
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/choose ./cmd/choose
 
   build:metal:
-    desc: Build with Metal acceleration (macOS)
+    desc: Build all apps with Metal acceleration (macOS)
     deps: [whisper-lib:metal]
     cmds:
       - |
@@ -102,6 +115,9 @@ tasks:
         INCLUDE_FLAGS="-I${ROOT}/third_party/whisper.cpp/include -I${ROOT}/third_party/whisper.cpp/ggml/include -DGGML_USE_METAL=1"
         LIB_FLAGS="-L${ROOT}/third_party/whisper.cpp/build/src -L${ROOT}/third_party/whisper.cpp/build -L${ROOT}/third_party/whisper.cpp/build/ggml/src -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-blas -L${ROOT}/third_party/whisper.cpp/build/ggml/src/ggml-metal -lwhisper -lggml -lggml-metal -lggml-blas -framework Accelerate -framework Metal -framework MetalKit -framework Foundation"
         CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -tags=metal -ldflags "-s -w" -o bin/server-metal ./cmd/server
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -tags=metal -ldflags "-s -w" -o bin/mic-metal ./cmd/mic
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -tags=metal -ldflags "-s -w" -o bin/research-metal ./cmd/research
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -tags=metal -ldflags "-s -w" -o bin/choose-metal ./cmd/choose
 
   build:cuda:deps:ubuntu:
     desc: Install Ubuntu dependencies for CUDA and FFmpeg (requires sudo)
@@ -114,7 +130,7 @@ tasks:
           ffmpeg libavformat-dev libavcodec-dev libavdevice-dev libavfilter-dev \
           libswresample-dev libswscale-dev libavutil-dev
   build:cuda:
-    desc: Build server with CUDA acceleration (Ubuntu)
+    desc: Build all apps with CUDA acceleration (Ubuntu)
     deps: [whisper-lib:cuda]
     cmds:
       - |
@@ -131,6 +147,9 @@ tasks:
         -Wl,--start-group -lwhisper -lggml -lggml-cuda -lggml-cpu -Wl,--end-group \
         -lstdc++ -lm -lpthread -ldl -fopenmp -lcuda -lcudart -lcublas -lcublasLt"
         CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/server-cuda ./cmd/server
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/mic-cuda ./cmd/mic
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/research-cuda ./cmd/research
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/choose-cuda ./cmd/choose
 
   run:cuda:
     desc: Run server with CUDA build
