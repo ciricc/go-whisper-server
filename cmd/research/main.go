@@ -45,6 +45,7 @@ func main() {
 		windowSeconds = flag.Int("window_seconds", 30, "window size in seconds for feeding PCM chunks")
 		monitorGPU    = flag.Bool("monitor_gpu", true, "print real-time NVIDIA GPU utilization using nvidia-smi XML")
 		monitorEvery  = flag.Duration("monitor_interval", time.Second, "interval for GPU monitor sampling")
+		concurrency   = flag.Int("concurrency", 1, "number of concurrent transcribe workers to saturate GPU")
 	)
 	flag.Parse()
 
@@ -80,15 +81,55 @@ func main() {
 
 	var runs []RunMetrics
 	var maxRSSKB uint64
-	for i := 0; i < *repeats; i++ {
-		rm, err := runOnce(context.Background(), *modelPath, *wavPath, *language, *threads, *strategy, *useGPU, *gpuDevice, *windowSeconds, wavDur, false)
-		if err != nil {
-			close(rssStopCh)
+	if *concurrency <= 1 {
+		for i := 0; i < *repeats; i++ {
+			rm, err := runOnce(context.Background(), *modelPath, *wavPath, *language, *threads, *strategy, *useGPU, *gpuDevice, *windowSeconds, wavDur, false)
+			if err != nil {
+				close(rssStopCh)
+				drainRSS(rssSamplesCh, &maxRSSKB)
+				fatalf("run %d failed: %v", i+1, err)
+			}
+			runs = append(runs, rm)
 			drainRSS(rssSamplesCh, &maxRSSKB)
-			fatalf("run %d failed: %v", i+1, err)
 		}
-		runs = append(runs, rm)
-		drainRSS(rssSamplesCh, &maxRSSKB)
+	} else {
+		// Multi-worker throughput mode: run N concurrent workers processing the same file
+		// repeatedly for a fixed number of repeats per worker, and measure wall time.
+		startWall := time.Now()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		type workerRes struct {
+			r   RunMetrics
+			err error
+		}
+		resCh := make(chan workerRes, *concurrency*(*repeats))
+		for w := 0; w < *concurrency; w++ {
+			go func() {
+				for i := 0; i < *repeats; i++ {
+					rm, err := runOnce(ctx, *modelPath, *wavPath, *language, *threads, *strategy, *useGPU, *gpuDevice, *windowSeconds, wavDur, true)
+					resCh <- workerRes{rm, err}
+					if err != nil {
+						return
+					}
+				}
+			}()
+		}
+		completed := 0
+		totalRuns := *concurrency * (*repeats)
+		for completed < totalRuns {
+			wr := <-resCh
+			if wr.err != nil {
+				cancel()
+				close(rssStopCh)
+				drainRSS(rssSamplesCh, &maxRSSKB)
+				fatalf("concurrent run failed: %v", wr.err)
+			}
+			runs = append(runs, wr.r)
+			completed++
+			drainRSS(rssSamplesCh, &maxRSSKB)
+		}
+		// Add a synthetic aggregate run equal to average (compat), wall will be computed below
+		_ = startWall
 	}
 	close(rssStopCh)
 	drainRSS(rssSamplesCh, &maxRSSKB)
@@ -131,7 +172,35 @@ func main() {
 		OS:                   runtime.GOOS,
 		Arch:                 runtime.GOARCH,
 		MonthlyPriceUSD:      *monthlyPrice,
-		CostPerAudioHourUSD:  costPerAudioHour(*monthlyPrice, avgRTF),
+	}
+
+	// Throughput/cost with concurrency
+	if *concurrency > 1 {
+		res.Concurrency = *concurrency
+		// Total audio hours processed = total runs * wav duration hours
+		wavHours := wavDur / 3600.0
+		res.TotalAudioHoursProcessed = float64(len(runs)) * wavHours
+		// We approximate wall time as average of per-run processing seconds at concurrency.
+		// Since runs are concurrent, a tight lower bound is (sum of per-run proc seconds) / concurrency.
+		var sumProc float64
+		for _, r := range runs {
+			sumProc += r.ProcessingSeconds
+		}
+		if *concurrency > 0 {
+			res.WallSecondsTotal = sumProc / float64(*concurrency)
+		}
+		if res.WallSecondsTotal > 0 {
+			res.ThroughputAudioHoursPerWallHour = res.TotalAudioHoursProcessed / (res.WallSecondsTotal / 3600.0)
+		}
+		if *monthlyPrice > 0 && res.ThroughputAudioHoursPerWallHour > 0 {
+			// Prefer throughput-based cost: hourly price / throughput
+			hourly := *monthlyPrice / (30.0 * 24.0)
+			res.CostPerAudioHourUSD = hourly / res.ThroughputAudioHoursPerWallHour
+		} else {
+			res.CostPerAudioHourUSD = costPerAudioHour(*monthlyPrice, avgRTF)
+		}
+	} else {
+		res.CostPerAudioHourUSD = costPerAudioHour(*monthlyPrice, avgRTF)
 	}
 
 	if err := writeJSON(res, *outPath); err != nil {

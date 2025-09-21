@@ -24,14 +24,19 @@ type BenchmarkResult struct {
 	AvgProcessingSeconds    float64           `json:"avg_processing_seconds"`
 	AvgRealTimeFactor       float64           `json:"avg_real_time_factor"`
 	WallSecondsPerAudioHour float64           `json:"wall_seconds_per_audio_hour"`
-	PeakRSSMegabytes        float64           `json:"peak_rss_mb"`
-	GPUVRAMTotalMB          float64           `json:"gpu_vram_total_mb"`
-	GPUVRAMUsedMB           float64           `json:"gpu_vram_used_mb"`
-	GPUVRAMFreeMB           float64           `json:"gpu_vram_free_mb"`
-	CPUModel                string            `json:"cpu_model"`
-	CPUNumLogical           int               `json:"cpu_num_logical"`
-	OS                      string            `json:"os"`
-	Arch                    string            `json:"arch"`
-	MonthlyPriceUSD         float64           `json:"monthly_price_usd"`
-	CostPerAudioHourUSD     float64           `json:"cost_per_audio_hour_usd"`
+	// Concurrency/throughput fields (set when using multi-stream runs)
+	Concurrency                     int     `json:"concurrency"`
+	WallSecondsTotal                float64 `json:"wall_seconds_total"`
+	TotalAudioHoursProcessed        float64 `json:"total_audio_hours_processed"`
+	ThroughputAudioHoursPerWallHour float64 `json:"throughput_audio_hours_per_wall_hour"`
+	PeakRSSMegabytes                float64 `json:"peak_rss_mb"`
+	GPUVRAMTotalMB                  float64 `json:"gpu_vram_total_mb"`
+	GPUVRAMUsedMB                   float64 `json:"gpu_vram_used_mb"`
+	GPUVRAMFreeMB                   float64 `json:"gpu_vram_free_mb"`
+	CPUModel                        string  `json:"cpu_model"`
+	CPUNumLogical                   int     `json:"cpu_num_logical"`
+	OS                              string  `json:"os"`
+	Arch                            string  `json:"arch"`
+	MonthlyPriceUSD                 float64 `json:"monthly_price_usd"`
+	CostPerAudioHourUSD             float64 `json:"cost_per_audio_hour_usd"`
 }
