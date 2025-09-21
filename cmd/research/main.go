@@ -98,14 +98,14 @@ func main() {
 			drainRSS(rssSamplesCh, &maxRSSKB)
 		}
 	} else {
-		// Multi-worker throughput mode using one shared model and multiple stateful contexts.
-		model, err := loadModel(*modelPath, *useGPU, *gpuDevice)
-		if err != nil {
-			close(rssStopCh)
-			drainRSS(rssSamplesCh, &maxRSSKB)
-			fatalf("load model: %v", err)
-		}
-		defer model.Close()
+		// // Multi-worker throughput mode using one shared model and multiple stateful contexts.
+		// model, err := loadModel(*modelPath, *useGPU, *gpuDevice)
+		// if err != nil {
+		// 	close(rssStopCh)
+		// 	drainRSS(rssSamplesCh, &maxRSSKB)
+		// 	fatalf("load model: %v", err)
+		// }
+		// defer model.Close()
 
 		startWall := time.Now()
 		ctx, cancel := context.WithCancel(context.Background())
@@ -118,7 +118,7 @@ func main() {
 		for w := 0; w < *concurrency; w++ {
 			go func() {
 				for i := 0; i < *repeats; i++ {
-					rm, err := runOnceWithModel(ctx, model, *wavPath, *language, *threads, *strategy, *windowSeconds, wavDur, true)
+					rm, err := runOnce(ctx, *modelPath, *wavPath, *language, *threads, *strategy, *useGPU, *gpuDevice, *windowSeconds, wavDur, true)
 					resCh <- workerRes{r: rm, err: err}
 					if err != nil {
 						return
