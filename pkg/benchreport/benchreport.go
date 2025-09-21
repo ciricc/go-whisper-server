@@ -33,10 +33,15 @@ type BenchmarkResult struct {
 	GPUVRAMTotalMB                  float64 `json:"gpu_vram_total_mb"`
 	GPUVRAMUsedMB                   float64 `json:"gpu_vram_used_mb"`
 	GPUVRAMFreeMB                   float64 `json:"gpu_vram_free_mb"`
-	CPUModel                        string  `json:"cpu_model"`
-	CPUNumLogical                   int     `json:"cpu_num_logical"`
-	OS                              string  `json:"os"`
-	Arch                            string  `json:"arch"`
-	MonthlyPriceUSD                 float64 `json:"monthly_price_usd"`
-	CostPerAudioHourUSD             float64 `json:"cost_per_audio_hour_usd"`
+	// Aggregated GPU metrics over the whole run (if monitored)
+	GPUUtilAvgPercent   float64 `json:"gpu_util_avg_percent"`
+	GPUUtilMaxPercent   int     `json:"gpu_util_max_percent"`
+	GPUVRAMUsedAvgMB    float64 `json:"gpu_vram_used_avg_mb"`
+	GPUVRAMUsedMaxMB    float64 `json:"gpu_vram_used_max_mb"`
+	CPUModel            string  `json:"cpu_model"`
+	CPUNumLogical       int     `json:"cpu_num_logical"`
+	OS                  string  `json:"os"`
+	Arch                string  `json:"arch"`
+	MonthlyPriceUSD     float64 `json:"monthly_price_usd"`
+	CostPerAudioHourUSD float64 `json:"cost_per_audio_hour_usd"`
 }

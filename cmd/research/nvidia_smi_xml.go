@@ -155,7 +155,7 @@ func sampleNvidiaSMIXML(ctx context.Context, device int) (GPUSample, error) {
 }
 
 // monitorNvidiaSMI prints real-time utilization using XML sampling every interval until stop is closed.
-func monitorNvidiaSMI(device int, interval time.Duration, stop <-chan struct{}) {
+func monitorNvidiaSMI(device int, interval time.Duration, stop <-chan struct{}, sink chan<- GPUSample) {
 	if !hasNvidiaSMI() {
 		return
 	}
@@ -164,6 +164,9 @@ func monitorNvidiaSMI(device int, interval time.Duration, stop <-chan struct{}) 
 	for {
 		select {
 		case <-stop:
+			if sink != nil {
+				close(sink)
+			}
 			return
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
@@ -183,6 +186,12 @@ func monitorNvidiaSMI(device int, interval time.Duration, stop <-chan struct{}) 
 				"\rGPU%d %s util=%3d%%, mem=%.0f/%.0f MiB (%2.0f%%), power=%.0f W, sm=%d MHz",
 				s.Index, s.Name, s.UtilPercent, s.MemUsedMB, s.MemTotalMB, memPct, s.PowerWatt, s.SMClockMHz,
 			)
+			if sink != nil {
+				select {
+				case sink <- s:
+				default:
+				}
+			}
 		}
 	}
 }

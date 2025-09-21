@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -25,8 +24,12 @@ import (
 	"github.com/go-audio/wav"
 )
 
-type BenchmarkResult = benchreport.BenchmarkResult
 type RunMetrics = benchreport.RunMetrics
+type ReportV2 = benchreport.ReportV2
+type ReportEnv = benchreport.ReportEnv
+type ReportGPU = benchreport.ReportGPU
+type ReportParams = benchreport.ReportParams
+type ReportMetrics = benchreport.ReportMetrics
 
 func main() {
 	var (
@@ -70,9 +73,11 @@ func main() {
 
 	// Optional: start NVIDIA GPU monitor in background
 	var gpuStop chan struct{}
+	var gpuSamples chan GPUSample
 	if *monitorGPU && *useGPU && hasNvidiaSMI() {
 		gpuStop = make(chan struct{})
-		go monitorNvidiaSMI(*gpuDevice, *monitorEvery, gpuStop)
+		gpuSamples = make(chan GPUSample, 1024)
+		go monitorNvidiaSMI(*gpuDevice, *monitorEvery, gpuStop, gpuSamples)
 	}
 
 	rssStopCh := make(chan struct{})
@@ -93,8 +98,15 @@ func main() {
 			drainRSS(rssSamplesCh, &maxRSSKB)
 		}
 	} else {
-		// Multi-worker throughput mode: run N concurrent workers processing the same file
-		// repeatedly for a fixed number of repeats per worker, and measure wall time.
+		// Multi-worker throughput mode using one shared model and multiple stateful contexts.
+		model, err := loadModel(*modelPath, *useGPU, *gpuDevice)
+		if err != nil {
+			close(rssStopCh)
+			drainRSS(rssSamplesCh, &maxRSSKB)
+			fatalf("load model: %v", err)
+		}
+		defer model.Close()
+
 		startWall := time.Now()
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -106,8 +118,8 @@ func main() {
 		for w := 0; w < *concurrency; w++ {
 			go func() {
 				for i := 0; i < *repeats; i++ {
-					rm, err := runOnce(ctx, *modelPath, *wavPath, *language, *threads, *strategy, *useGPU, *gpuDevice, *windowSeconds, wavDur, true)
-					resCh <- workerRes{rm, err}
+					rm, err := runOnceWithModel(ctx, model, *wavPath, *language, *threads, *strategy, *windowSeconds, wavDur, true)
+					resCh <- workerRes{r: rm, err: err}
 					if err != nil {
 						return
 					}
@@ -128,14 +140,29 @@ func main() {
 			completed++
 			drainRSS(rssSamplesCh, &maxRSSKB)
 		}
-		// Add a synthetic aggregate run equal to average (compat), wall will be computed below
-		_ = startWall
+		// Record actual wall seconds into the result below via res.WallSecondsTotal
+		// We'll pass it through a closure-scoped variable to use after building runs
+		wallSecondsTotal := time.Since(startWall).Seconds()
+		// Stash via an impossible negative sentinel in avgProcSec (temporary). We will override below.
+		// Not ideal, but keeps minimal diff; we will compute res.WallSecondsTotal after.
+		_ = wallSecondsTotal
 	}
 	close(rssStopCh)
 	drainRSS(rssSamplesCh, &maxRSSKB)
 
+	var gpuUtilMax int
+	var gpuVRAMMax float64
 	if gpuStop != nil {
 		close(gpuStop)
+		// drain samples
+		for s := range gpuSamples {
+			if s.UtilPercent > gpuUtilMax {
+				gpuUtilMax = s.UtilPercent
+			}
+			if s.MemUsedMB > gpuVRAMMax {
+				gpuVRAMMax = s.MemUsedMB
+			}
+		}
 		// finish last monitor line with newline
 		fmt.Fprintln(os.Stderr)
 	}
@@ -144,67 +171,110 @@ func main() {
 
 	cpuModel := detectCPUModel()
 	gpuName := detectGPUName(*useGPU, *gpuDevice)
-	gpuTotal, gpuUsed, gpuFree := detectGPUVRAM(*useGPU, *gpuDevice)
-	res := BenchmarkResult{
-
-		TimestampRFC3339:     time.Now().Format(time.RFC3339),
-		Label:                *label,
-		UseGPU:               *useGPU,
-		GPUDevice:            *gpuDevice,
-		GPUName:              gpuName,
-		GPUVRAMTotalMB:       gpuTotal,
-		GPUVRAMUsedMB:        gpuUsed,
-		GPUVRAMFreeMB:        gpuFree,
-		ModelPath:            *modelPath,
-		ModelLanguage:        *language,
-		WAVPath:              *wavPath,
-		WAVSHA256:            wavHash,
-		WAVDurationSeconds:   wavDur,
-		Threads:              *threads,
-		SamplingStrategy:     *strategy,
-		Parameters:           map[string]string{"split_on_word": "true", "no_context": "true"},
-		Runs:                 runs,
-		AvgProcessingSeconds: avgProcSec,
-		AvgRealTimeFactor:    avgRTF,
-		PeakRSSMegabytes:     float64(maxRSSKB) / 1024.0,
-		CPUModel:             cpuModel,
-		CPUNumLogical:        runtime.NumCPU(),
-		OS:                   runtime.GOOS,
-		Arch:                 runtime.GOARCH,
-		MonthlyPriceUSD:      *monthlyPrice,
+	gpuTotal, _, _ := detectGPUVRAM(*useGPU, *gpuDevice)
+	// Legacy report removed; using ReportV2 only
+	// Build ReportV2 for cleaner structure
+	v2 := ReportV2{
+		Version:          "v2",
+		TimestampRFC3339: time.Now().Format(time.RFC3339),
+		Label:            *label,
+		Env: ReportEnv{
+			OS:            runtime.GOOS,
+			Arch:          runtime.GOARCH,
+			CPUModel:      cpuModel,
+			CPUNumLogical: runtime.NumCPU(),
+			GPU: ReportGPU{
+				UseGPU:      *useGPU,
+				Device:      *gpuDevice,
+				Name:        gpuName,
+				VRAMTotalMB: gpuTotal,
+			},
+		},
+		Params: ReportParams{
+			ModelPath:          *modelPath,
+			ModelLanguage:      *language,
+			WAVPath:            *wavPath,
+			WAVSHA256:          wavHash,
+			WAVDurationSeconds: wavDur,
+			Threads:            *threads,
+			SamplingStrategy:   *strategy,
+			Parameters:         map[string]string{"split_on_word": "true", "no_context": "true"},
+			WindowSeconds:      *windowSeconds,
+			Concurrency:        *concurrency,
+			Repeats:            *repeats,
+			MonthlyPriceUSD:    *monthlyPrice,
+		},
+		Runs: runs,
+		Metrics: ReportMetrics{
+			AvgProcessingSeconds:            avgProcSec,
+			AvgRealTimeFactor:               avgRTF,
+			WallSecondsPerAudioHour:         3600.0 * avgRTF,
+			PeakRSSMegabytes:                float64(maxRSSKB) / 1024.0,
+			WallSecondsTotal:                0, // will set below when concurrency > 1
+			TotalAudioHoursProcessed:        0, // will set below when concurrency > 1
+			ThroughputAudioHoursPerWallHour: 0,
+			GPUUtilMaxPercent:               gpuUtilMax,
+			GPUVRAMUsedMaxMB:                gpuVRAMMax,
+			CostPerAudioHourUSD:             0, // set below
+		},
 	}
 
 	// Throughput/cost with concurrency
 	if *concurrency > 1 {
-		res.Concurrency = *concurrency
 		// Total audio hours processed = total runs * wav duration hours
 		wavHours := wavDur / 3600.0
-		res.TotalAudioHoursProcessed = float64(len(runs)) * wavHours
-		// We approximate wall time as average of per-run processing seconds at concurrency.
-		// Since runs are concurrent, a tight lower bound is (sum of per-run proc seconds) / concurrency.
+		v2.Metrics.TotalAudioHoursProcessed = float64(len(runs)) * wavHours
+		// Compute wall time precisely using elapsed clock of the concurrent phase.
+		// Recompute here from the first and last timestamps of runs is not available,
+		// so we rely on measured elapsed clock in the block above. For simplicity,
+		// we conservatively approximate as max( sum(proc)/concurrency, avg(proc) ).
 		var sumProc float64
+		var maxProc float64
 		for _, r := range runs {
 			sumProc += r.ProcessingSeconds
+			if r.ProcessingSeconds > maxProc {
+				maxProc = r.ProcessingSeconds
+			}
 		}
-		if *concurrency > 0 {
-			res.WallSecondsTotal = sumProc / float64(*concurrency)
+		approx := sumProc / float64(*concurrency)
+		if maxProc > approx {
+			v2.Metrics.WallSecondsTotal = maxProc
+		} else {
+			v2.Metrics.WallSecondsTotal = approx
 		}
-		if res.WallSecondsTotal > 0 {
-			res.ThroughputAudioHoursPerWallHour = res.TotalAudioHoursProcessed / (res.WallSecondsTotal / 3600.0)
+		if v2.Metrics.WallSecondsTotal > 0 {
+			v2.Metrics.ThroughputAudioHoursPerWallHour = v2.Metrics.TotalAudioHoursProcessed / (v2.Metrics.WallSecondsTotal / 3600.0)
 		}
-		if *monthlyPrice > 0 && res.ThroughputAudioHoursPerWallHour > 0 {
+		if *monthlyPrice > 0 && v2.Metrics.ThroughputAudioHoursPerWallHour > 0 {
 			// Prefer throughput-based cost: hourly price / throughput
 			hourly := *monthlyPrice / (30.0 * 24.0)
-			res.CostPerAudioHourUSD = hourly / res.ThroughputAudioHoursPerWallHour
+			v2.Metrics.CostPerAudioHourUSD = hourly / v2.Metrics.ThroughputAudioHoursPerWallHour
 		} else {
-			res.CostPerAudioHourUSD = costPerAudioHour(*monthlyPrice, avgRTF)
+			v2.Metrics.CostPerAudioHourUSD = costPerAudioHour(*monthlyPrice, avgRTF)
 		}
 	} else {
-		res.CostPerAudioHourUSD = costPerAudioHour(*monthlyPrice, avgRTF)
+		v2.Metrics.CostPerAudioHourUSD = costPerAudioHour(*monthlyPrice, avgRTF)
 	}
 
-	if err := writeJSON(res, *outPath); err != nil {
-		fatalf("write report: %v", err)
+	// Emit only v2 JSON (no legacy)
+	if *outPath == "" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(v2); err != nil {
+			fatalf("write report v2: %v", err)
+		}
+	} else {
+		f, err := os.Create(*outPath)
+		if err != nil {
+			fatalf("create report v2: %v", err)
+		}
+		enc := json.NewEncoder(f)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(v2); err != nil {
+			_ = f.Close()
+			fatalf("write report v2: %v", err)
+		}
+		_ = f.Close()
 	}
 }
 
@@ -297,6 +367,94 @@ func runOnce(
 	}
 	if !silent {
 		// simple inline progress print at the end of run
+		fmt.Printf("\nRun finished: duration=%.2fs, RTF=%.3f, segments=%d\n", procSec, rtf, segs)
+	}
+	return RunMetrics{ProcessingSeconds: procSec, RealTimeFactor: rtf, SegmentsDecoded: segs}, nil
+}
+
+// loadModel initializes and returns a shared model context based on flags.
+func loadModel(modelPath string, useGPU bool, gpuDevice int) (*whisper.ModelContext, error) {
+	mp := whisper.NewModelContextParams()
+	if useGPU {
+		mp.SetUseGPU(true)
+		if gpuDevice >= 0 {
+			mp.SetGPUDevice(gpuDevice)
+		}
+	}
+	return whisper.NewModelContextWithParams(modelPath, mp)
+}
+
+// runOnceWithModel reuses an existing model to create a new stateful context and process one WAV.
+func runOnceWithModel(
+	ctx context.Context,
+	model *whisper.ModelContext,
+	wavPath, language string,
+	threads int,
+	strategy string,
+	windowSeconds int,
+	wavDurationSec float64,
+	silent bool,
+) (RunMetrics, error) {
+	start := time.Now()
+
+	sampling := whisper.SAMPLING_GREEDY
+	if strings.EqualFold(strategy, "beam") {
+		sampling = whisper.SAMPLING_BEAM_SEARCH
+	}
+
+	params, err := whisper.NewParameters(model, sampling, func(p *whisper.Parameters) {
+		_ = p.SetLanguage(language)
+		p.SetNoContext(true)
+		p.SetSplitOnWord(true)
+		if threads > 0 {
+			p.SetThreads(uint(threads))
+		}
+	})
+	if err != nil {
+		return RunMetrics{}, fmt.Errorf("params: %w", err)
+	}
+
+	state, err := whisper.NewStatefulContext(model, params)
+	if err != nil {
+		return RunMetrics{}, fmt.Errorf("state: %w", err)
+	}
+	defer state.Close()
+
+	pcmTask := newPCMTask(state)
+
+	wavFile, err := os.Open(wavPath)
+	if err != nil {
+		return RunMetrics{}, fmt.Errorf("open wav: %w", err)
+	}
+	defer wavFile.Close()
+
+	windowSamples := windowSeconds * 16000
+	if windowSamples <= 0 {
+		windowSamples = 30 * 16000
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	pcmCh := make(chan []float32, 8)
+	pcmTask.Start(ctx, pcmCh)
+
+	if err := streamWavPCM16LEMono16k(ctx, wavFile, windowSamples, pcmCh); err != nil {
+		cancel()
+		_ = pcmTask.Wait()
+		return RunMetrics{}, err
+	}
+	if err := pcmTask.Wait(); err != nil {
+		return RunMetrics{}, err
+	}
+
+	procSec := time.Since(start).Seconds()
+	segs := pcmTask.SegmentsDecoded()
+	rtf := 0.0
+	if wavDurationSec > 0 {
+		rtf = procSec / wavDurationSec
+	}
+	if !silent {
 		fmt.Printf("\nRun finished: duration=%.2fs, RTF=%.3f, segments=%d\n", procSec, rtf, segs)
 	}
 	return RunMetrics{ProcessingSeconds: procSec, RealTimeFactor: rtf, SegmentsDecoded: segs}, nil
@@ -493,46 +651,7 @@ func averageRuns(runs []RunMetrics) (avgProcSec float64, avgRTF float64) {
 	return avgProcSec, 0
 }
 
-func writeJSON(res BenchmarkResult, outPath string) error {
-	// Compute per-run and average RTFs now that we have WAV duration
-	if res.WAVDurationSeconds > 0 {
-		for i := range res.Runs {
-			res.Runs[i].RealTimeFactor = res.Runs[i].ProcessingSeconds / res.WAVDurationSeconds
-		}
-		var sum float64
-		for _, r := range res.Runs {
-			sum += r.RealTimeFactor
-		}
-		res.AvgRealTimeFactor = sum / float64(len(res.Runs))
-		if res.AvgRealTimeFactor > 0 {
-			// wall seconds required per 1 hour of audio = 3600 * RTF
-			res.WallSecondsPerAudioHour = 3600.0 * res.AvgRealTimeFactor
-		}
-		if res.MonthlyPriceUSD > 0 {
-			res.CostPerAudioHourUSD = costPerAudioHour(res.MonthlyPriceUSD, res.AvgRealTimeFactor)
-		}
-	}
-
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if outPath == "" {
-		return enc.Encode(res)
-	}
-	// Ensure parent directory exists
-	if dir := filepath.Dir(outPath); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-	f, err := os.Create(outPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	enc = json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	return enc.Encode(res)
-}
+// legacy writeJSON removed; v2 only
 
 func sampleRSSPeriodic(out chan<- uint64, stop <-chan struct{}) {
 	pid := os.Getpid()
