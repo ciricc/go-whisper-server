@@ -25,6 +25,9 @@ type BenchmarkResult struct {
 	AvgRealTimeFactor       float64           `json:"avg_real_time_factor"`
 	WallSecondsPerAudioHour float64           `json:"wall_seconds_per_audio_hour"`
 	PeakRSSMegabytes        float64           `json:"peak_rss_mb"`
+	GPUVRAMTotalMB          float64           `json:"gpu_vram_total_mb"`
+	GPUVRAMUsedMB           float64           `json:"gpu_vram_used_mb"`
+	GPUVRAMFreeMB           float64           `json:"gpu_vram_free_mb"`
 	CPUModel                string            `json:"cpu_model"`
 	CPUNumLogical           int               `json:"cpu_num_logical"`
 	OS                      string            `json:"os"`

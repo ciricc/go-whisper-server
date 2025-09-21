@@ -43,6 +43,8 @@ func main() {
 		warmup        = flag.Bool("warmup", false, "run one unmeasured warmup before measured runs")
 		outPath       = flag.String("out", "", "optional path to write JSON report (defaults to stdout)")
 		windowSeconds = flag.Int("window_seconds", 30, "window size in seconds for feeding PCM chunks")
+		monitorGPU    = flag.Bool("monitor_gpu", true, "print real-time NVIDIA GPU utilization using nvidia-smi XML")
+		monitorEvery  = flag.Duration("monitor_interval", time.Second, "interval for GPU monitor sampling")
 	)
 	flag.Parse()
 
@@ -65,6 +67,13 @@ func main() {
 		}
 	}
 
+	// Optional: start NVIDIA GPU monitor in background
+	var gpuStop chan struct{}
+	if *monitorGPU && *useGPU && hasNvidiaSMI() {
+		gpuStop = make(chan struct{})
+		go monitorNvidiaSMI(*gpuDevice, *monitorEvery, gpuStop)
+	}
+
 	rssStopCh := make(chan struct{})
 	rssSamplesCh := make(chan uint64, 1024)
 	go sampleRSSPeriodic(rssSamplesCh, rssStopCh)
@@ -84,16 +93,27 @@ func main() {
 	close(rssStopCh)
 	drainRSS(rssSamplesCh, &maxRSSKB)
 
+	if gpuStop != nil {
+		close(gpuStop)
+		// finish last monitor line with newline
+		fmt.Fprintln(os.Stderr)
+	}
+
 	avgProcSec, avgRTF := averageRuns(runs)
 
 	cpuModel := detectCPUModel()
 	gpuName := detectGPUName(*useGPU, *gpuDevice)
+	gpuTotal, gpuUsed, gpuFree := detectGPUVRAM(*useGPU, *gpuDevice)
 	res := BenchmarkResult{
+
 		TimestampRFC3339:     time.Now().Format(time.RFC3339),
 		Label:                *label,
 		UseGPU:               *useGPU,
 		GPUDevice:            *gpuDevice,
 		GPUName:              gpuName,
+		GPUVRAMTotalMB:       gpuTotal,
+		GPUVRAMUsedMB:        gpuUsed,
+		GPUVRAMFreeMB:        gpuFree,
 		ModelPath:            *modelPath,
 		ModelLanguage:        *language,
 		WAVPath:              *wavPath,
@@ -587,6 +607,80 @@ func detectGPUName(useGPU bool, device int) string {
 		}
 	}
 	return "GPU"
+}
+
+func detectGPUVRAM(useGPU bool, device int) (totalMB, usedMB, freeMB float64) {
+	if !useGPU {
+		return 0, 0, 0
+	}
+	// NVIDIA via nvidia-smi
+	if path, _ := exec.LookPath("nvidia-smi"); path != "" {
+		// CSV: memory.total,memory.used,memory.free in MiB
+		out, err := exec.Command("nvidia-smi", "--query-gpu=memory.total,memory.used,memory.free,index", "--format=csv,noheader,nounits").Output()
+		if err == nil {
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			for _, ln := range lines {
+				parts := strings.Split(ln, ",")
+				if len(parts) == 4 {
+					t := strings.TrimSpace(parts[0])
+					u := strings.TrimSpace(parts[1])
+					f := strings.TrimSpace(parts[2])
+					idxStr := strings.TrimSpace(parts[3])
+					if idx, e := strconv.Atoi(idxStr); e == nil && idx == device {
+						if tv, e := strconv.ParseFloat(t, 64); e == nil {
+							totalMB = tv
+						}
+						if uv, e := strconv.ParseFloat(u, 64); e == nil {
+							usedMB = uv
+						}
+						if fv, e := strconv.ParseFloat(f, 64); e == nil {
+							freeMB = fv
+						}
+						return
+					}
+				}
+			}
+			// fallback to first line
+			if len(lines) > 0 {
+				parts := strings.Split(lines[0], ",")
+				if len(parts) >= 3 {
+					totalMB, _ = strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+					usedMB, _ = strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+					freeMB, _ = strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+				}
+			}
+		}
+	}
+	// AMD via rocm-smi (values may vary by version); attempt to parse
+	if path, _ := exec.LookPath("rocm-smi"); path != "" && totalMB == 0 {
+		// rocm-smi --showmeminfo vram
+		out, err := exec.Command("rocm-smi", "--showmeminfo", "vram").Output()
+		if err == nil {
+			// Look for lines like: GPU[0] : VRAM Total Memory (B): 17163091968, Used (B): 12345678, Free (B): ...
+			sc := bufio.NewScanner(strings.NewReader(string(out)))
+			for sc.Scan() {
+				line := sc.Text()
+				if strings.Contains(line, "VRAM Total Memory") {
+					// Extract bytes
+					fields := strings.FieldsFunc(line, func(r rune) bool { return r == ':' || r == ',' })
+					if len(fields) >= 6 {
+						// naive parse
+						if tv, e := strconv.ParseFloat(strings.TrimSpace(fields[2]), 64); e == nil {
+							totalMB = tv / (1024 * 1024)
+						}
+						if uv, e := strconv.ParseFloat(strings.TrimSpace(fields[4]), 64); e == nil {
+							usedMB = uv / (1024 * 1024)
+						}
+						if fv, e := strconv.ParseFloat(strings.TrimSpace(fields[6]), 64); e == nil {
+							freeMB = fv / (1024 * 1024)
+						}
+						return
+					}
+				}
+			}
+		}
+	}
+	return
 }
 
 func costPerAudioHour(monthlyPriceUSD, avgRTF float64) float64 {

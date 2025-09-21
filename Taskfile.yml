@@ -6,6 +6,7 @@ vars:
   WHISPER_CPP_DIR: third_party/whisper.cpp
   WHISPER_BUILD_DIR: "{{.WHISPER_CPP_DIR}}/build"
   EASYP_BIN: '{{.EASYP_BIN | default "./bin/easyp"}}'
+  CUDA_ARCHS: '{{.CUDA_ARCHS | default "80"}}'
 
 tasks:
   default:
@@ -65,17 +66,21 @@ tasks:
           exit 1
         fi
         # Clean build dir to avoid stale host-compiler flags
+        # rm -rf {{.WHISPER_BUILD_DIR}}
         # Prefer GCC-12 for nvcc host compiler to avoid GCC ABI issues
         export CC="$(command -v gcc-12 || command -v gcc)"
         export CXX="$(command -v g++-12 || command -v g++)"
+        # Limit build parallelism to avoid OOM during CUDA compilation (override with JOBS=N)
+        JOBS="${JOBS:-1}"
         cmake -S {{.WHISPER_CPP_DIR}} -B {{.WHISPER_BUILD_DIR}} \
           -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
           -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF \
           -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_CUDA_F16=ON \
+          -DCMAKE_CUDA_ARCHITECTURES="{{.CUDA_ARCHS}}" \
           -DCMAKE_CUDA_HOST_COMPILER="$(command -v g++-12 || command -v g++)" \
           -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" \
           -DCMAKE_VERBOSE_MAKEFILE=ON
-        cmake --build {{.WHISPER_BUILD_DIR}} --target ggml-cuda whisper -j
+        cmake --build {{.WHISPER_BUILD_DIR}} --target ggml-cuda whisper -j "${JOBS}"
   # ------------------------------------------------------------------
   # Go Application Build
   # ------------------------------------------------------------------
@@ -146,10 +151,11 @@ tasks:
         -L${CUDA_HOME}/lib64 \
         -Wl,--start-group -lwhisper -lggml -lggml-cuda -lggml-cpu -Wl,--end-group \
         -lstdc++ -lm -lpthread -ldl -fopenmp -lcuda -lcudart -lcublas -lcublasLt"
-        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/server-cuda ./cmd/server
-        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/mic-cuda ./cmd/mic
-        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/research-cuda ./cmd/research
-        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -ldflags "-s -w" -o bin/choose-cuda ./cmd/choose
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go clean -cache
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -a -ldflags "-s -w" -o bin/server-cuda ./cmd/server
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -a -ldflags "-s -w" -o bin/mic-cuda ./cmd/mic
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -a -ldflags "-s -w" -o bin/research-cuda ./cmd/research
+        CGO_CFLAGS="${INCLUDE_FLAGS}" CGO_LDFLAGS="${LIB_FLAGS}" go build -a -ldflags "-s -w" -o bin/choose-cuda ./cmd/choose
 
   run:cuda:
     desc: Run server with CUDA build
