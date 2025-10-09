@@ -29,8 +29,10 @@ func New() (*Application, error) {
 		return nil, fmt.Errorf("failed to create whisper model: %w", err)
 	}
 
-	svc := transcribe_svc.NewTranscribeService(model)
-	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+	svc := transcribe_svc.NewTranscribeService(model, log)
 	grpcServer := server.NewTranscriberServer(log, svc)
 
 	return &Application{

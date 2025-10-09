@@ -87,6 +87,8 @@ func (s *TranscriberServer) TranscribeWav(
 	req *transcriberv1.TranscribeWavRequest,
 	stream grpc.ServerStreamingServer[transcriberv1.Segment],
 ) error {
+	s.Log.DebugContext(stream.Context(), "TranscribeWav request received")
+
 	if req.GetWav_16KFile() == nil {
 		return fmt.Errorf("pcm_file is required")
 	}
@@ -100,6 +102,7 @@ func (s *TranscriberServer) TranscribeWav(
 		defer cleanup()
 	}
 
+	s.Log.DebugContext(stream.Context(), "Starting transcription task")
 	task, err := s.transcribeSvc.TranscribeWav(
 		stream.Context(),
 		r,
@@ -109,17 +112,28 @@ func (s *TranscriberServer) TranscribeWav(
 		)...,
 	)
 	if err != nil {
+		s.Log.ErrorContext(stream.Context(), "Failed to create transcription task", "error", err)
 		return err
 	}
 
+	s.Log.DebugContext(stream.Context(), "Transcription task created, waiting for segments")
+	segmentCount := 0
 	for {
 		select {
 		case <-stream.Context().Done():
+			s.Log.DebugContext(stream.Context(), "Stream context done", "error", stream.Context().Err())
 			return stream.Context().Err()
 		case seg, ok := <-task.Segments():
 			if !ok {
+				s.Log.DebugContext(stream.Context(), "Segments channel closed", "totalSegments", segmentCount)
 				return task.Wait()
 			}
+			segmentCount++
+			s.Log.DebugContext(stream.Context(), "Received segment",
+				"segmentNumber", segmentCount,
+				"start", seg.Start.String(),
+				"end", seg.End.String(),
+				"text", seg.Text)
 			resp := &transcriberv1.Segment{
 				Start:           durationpb.New(seg.Start),
 				End:             durationpb.New(seg.End),
@@ -127,8 +141,10 @@ func (s *TranscriberServer) TranscribeWav(
 				SpeakerTurnNext: seg.SpeakerTurnNext,
 			}
 			if err := stream.Send(resp); err != nil {
+				s.Log.ErrorContext(stream.Context(), "Failed to send segment", "error", err)
 				return err
 			}
+			s.Log.DebugContext(stream.Context(), "Segment sent successfully")
 		}
 	}
 }

@@ -2,7 +2,7 @@ package whisper_lib
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,21 +17,31 @@ import (
 // So we give a flexible interface to transcribe data from different sources.
 // If you want to transcribe a wav/flac/mp3 file, you can use the wrappers around this task.
 type PCMTranscribeTask struct {
-	whisperCtx *whisper.StatefulContext
-	segCh      chan *segment.Segment
-	closed     sync.Once
-	fullyRead  atomic.Bool
-	done       chan error
+	whisperCtx     *whisper.StatefulContext
+	segCh          chan *segment.Segment
+	closed         sync.Once
+	fullyRead      atomic.Bool
+	done           chan error
+	logger         *slog.Logger
+	globalOffset   time.Duration
+	globalDuration time.Duration
+	totalSamples   int // Track total samples processed for virtual offset calculation
 }
 
 func NewPCMTranscribeTask(
 	whisperCtx *whisper.StatefulContext,
+	logger *slog.Logger,
+	globalOffset time.Duration,
+	globalDuration time.Duration,
 ) *PCMTranscribeTask {
 	return &PCMTranscribeTask{
-		whisperCtx: whisperCtx,
-		segCh:      make(chan *segment.Segment),
-		fullyRead:  atomic.Bool{},
-		done:       make(chan error, 1),
+		whisperCtx:     whisperCtx,
+		segCh:          make(chan *segment.Segment),
+		fullyRead:      atomic.Bool{},
+		done:           make(chan error, 1),
+		logger:         logger,
+		globalOffset:   globalOffset,
+		globalDuration: globalDuration,
 	}
 }
 
@@ -90,26 +100,71 @@ func (t *PCMTranscribeTask) processAudioPCM(
 	ctx context.Context,
 	pcmCh <-chan []float32,
 ) error {
+	// Create parameterized logger for this method
+	log := t.logger.With("method", "processAudioPCM")
+
 	chunkI := 0
-	var baseOffset time.Duration
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("[whisper] processAudioPCM: context done")
+			log.DebugContext(ctx, "context done")
 			return ctx.Err()
 		case pcm, ok := <-pcmCh:
 			if !ok {
-				fmt.Println("[whisper] processAudioPCM: pcm channel closed")
+				log.DebugContext(ctx, "pcm channel closed")
 				t.fullyRead.Store(true)
 				return nil
 			}
+
 			chunkI++
-			fmt.Printf("[whisper] processAudioPCM: chunk: %d\n", chunkI)
-			// Emit segments via callback, applying absolute baseOffset
+			currentChunkSamples := len(pcm)
+
+			// Calculate virtual offset for this chunk based on total processed samples
+			virtualChunkOffset := time.Duration(t.totalSamples) * time.Second / 16000
+
+			log.DebugContext(ctx, "chunk",
+				"chunkI", chunkI,
+				"pcmLen", currentChunkSamples,
+				"totalSamples", t.totalSamples,
+				"virtualChunkOffset", virtualChunkOffset,
+			)
+
+			// Process chunk with zero offset in whisper (we handle offset virtually)
 			if pErr := t.whisperCtx.Process(pcm, nil, func(s whisper.Segment) {
+				// Apply virtual offset: global offset + chunk offset within file
+				segStart := s.Start + t.globalOffset + virtualChunkOffset
+				segEnd := s.End + t.globalOffset + virtualChunkOffset
+
+				log.DebugContext(ctx, "processing segment",
+					"chunkI", chunkI,
+					"globalOffset", t.globalOffset,
+					"globalDuration", t.globalDuration,
+					"virtualChunkOffset", virtualChunkOffset,
+					"s.Start", s.Start,
+					"s.End", s.End,
+					"segStart", segStart,
+					"segEnd", segEnd,
+					"text", s.Text)
+
+				// Check if segment exceeds global duration limit
+				if t.globalDuration > 0 && segStart >= t.globalDuration {
+					log.DebugContext(ctx, "skipping segment beyond global duration",
+						"segStart", segStart,
+						"globalDuration", t.globalDuration)
+					return
+				}
+
+				// Trim segment end if it exceeds global duration
+				if t.globalDuration > 0 && segEnd > t.globalDuration {
+					segEnd = t.globalDuration
+					log.DebugContext(ctx, "trimmed segment end to global duration",
+						"originalEnd", s.End+t.globalOffset+virtualChunkOffset,
+						"trimmedEnd", segEnd)
+				}
+
 				seg := segment.NewSegment(
-					s.Start+baseOffset,
-					s.End+baseOffset,
+					segStart,
+					segEnd,
 					s.Text,
 					s.SpeakerTurnNext,
 				)
@@ -117,9 +172,15 @@ func (t *PCMTranscribeTask) processAudioPCM(
 			}, nil); pErr != nil {
 				return pErr
 			}
-			fmt.Printf("[whisper] processAudioPCM: processed: %d\n", chunkI)
-			// Advance absolute offset by this chunk length
-			baseOffset += time.Duration(len(pcm)) * time.Second / 16000
+
+			log.DebugContext(ctx, "processed",
+				"chunkI", chunkI,
+				"pcmLen", currentChunkSamples,
+				"totalSamples", t.totalSamples,
+			)
+
+			// Update total samples processed for next chunk's virtual offset
+			t.totalSamples += currentChunkSamples
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -79,13 +80,36 @@ func main() {
 		*maxResults = len(pareto)
 	}
 
+	logger := slog.Default()
+	choiceLog := logger.With("method", "choicePrinter")
+
 	for i := 0; i < *maxResults; i++ {
 		r := pareto[i].Report
-		fmt.Printf("%d) %s\n", i+1, pareto[i].Path)
-		fmt.Printf("   label=%s cpu=\"%s\" threads=%d gpu=%v gpu_name=\"%s\" gpu_device=%d\n", r.Label, r.CPUModel, r.Threads, r.UseGPU, r.GPUName, r.GPUDevice)
-		fmt.Printf("   model=%s lang=%s rtf=%.4f wall_s_per_audio_hour=%.1f avg_proc_s=%.2f peak_rss_mb=%.1f\n", r.ModelPath, r.ModelLanguage, r.AvgRealTimeFactor, r.WallSecondsPerAudioHour, r.AvgProcessingSeconds, r.PeakRSSMegabytes)
+		choiceLog.Debug("choice",
+			"rank", i+1,
+			"path", pareto[i].Path,
+		)
+		choiceLog.Debug("choice details",
+			"label", r.Label,
+			"cpu", r.CPUModel,
+			"threads", r.Threads,
+			"gpu", r.UseGPU,
+			"gpuName", r.GPUName,
+			"gpuDevice", r.GPUDevice,
+		)
+		choiceLog.Debug("choice metrics",
+			"model", r.ModelPath,
+			"lang", r.ModelLanguage,
+			"rtf", r.AvgRealTimeFactor,
+			"wallSPerAudioHour", r.WallSecondsPerAudioHour,
+			"avgProcS", r.AvgProcessingSeconds,
+			"peakRssMb", r.PeakRSSMegabytes,
+		)
 		if r.CostPerAudioHourUSD > 0 && r.MonthlyPriceUSD > 0 {
-			fmt.Printf("   price=$%.2f/mo cost_per_audio_hour=$%.4f\n", r.MonthlyPriceUSD, r.CostPerAudioHourUSD)
+			choiceLog.Debug("choice pricing",
+				"monthlyPriceUSD", r.MonthlyPriceUSD,
+				"costPerAudioHourUSD", r.CostPerAudioHourUSD,
+			)
 		}
 	}
 }

@@ -2,7 +2,6 @@ package whisper_lib
 
 import (
 	"context"
-	"fmt"
 )
 
 type pcmProducer func(context.Context, chan<- []float32) error
@@ -13,6 +12,9 @@ func runPCMWithProducer(
 	produce pcmProducer,
 	finish func(error),
 ) {
+	// Create parameterized logger for this method
+	log := task.logger.With("method", "runPCMWithProducer")
+
 	pcmCh := make(chan []float32)
 
 	// Start underlying PCM pipeline
@@ -20,13 +22,15 @@ func runPCMWithProducer(
 
 	go func() {
 		if err := produce(ctx, pcmCh); err != nil {
-			fmt.Printf("[runPCMWithProducer] produce error: %v\n", err)
+			log.DebugContext(ctx, "produce error",
+				"error", err,
+			)
 			close(pcmCh)
 			finish(err)
 			return
 		}
 
-		fmt.Printf("[runPCMWithProducer] produce done\n")
+		log.DebugContext(ctx, "produce done")
 
 		// Signal end-of-input to the PCM task before waiting for it
 		close(pcmCh)

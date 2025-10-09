@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/binary"
 	"flag"
-	"fmt"
 	"log"
+	"log/slog"
 	"math"
 	"os"
 	"os/signal"
@@ -52,7 +52,8 @@ func main() {
 	}
 	defer whisperCtx.Close()
 
-	task := whisper_lib.NewPCMTranscribeTask(whisperCtx)
+	logger := slog.Default()
+	task := whisper_lib.NewPCMTranscribeTask(whisperCtx, logger, 0, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -131,8 +132,13 @@ func main() {
 	// Segment printer
 	done := make(chan struct{})
 	go func() {
+		segLog := logger.With("method", "segmentPrinter")
 		for seg := range task.Segments() {
-			fmt.Printf("[%6d -> %6d] %s\n", seg.Start.Milliseconds(), seg.End.Milliseconds(), seg.Text)
+			segLog.DebugContext(ctx, "segment",
+				"startMs", seg.Start.Milliseconds(),
+				"endMs", seg.End.Milliseconds(),
+				"text", seg.Text,
+			)
 		}
 		close(done)
 	}()

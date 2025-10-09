@@ -23,13 +23,16 @@ type TranscribeService interface {
 
 type TranscribeServiceImpl struct {
 	whisperModel *whisper.ModelContext
+	logger       *slog.Logger
 }
 
 func NewTranscribeService(
 	whisperModel *whisper.ModelContext,
+	logger *slog.Logger,
 ) *TranscribeServiceImpl {
 	return &TranscribeServiceImpl{
 		whisperModel: whisperModel,
+		logger:       logger,
 	}
 }
 
@@ -75,8 +78,7 @@ func (s *TranscribeServiceImpl) TranscribeWav(
 			setParam(o.Vad, p.SetVAD)
 			setParam(o.MaxSegmentLength, p.SetMaxSegmentLength)
 			setParam(o.TokenTimestamps, p.SetTokenTimestamps)
-			setParam(o.Offset, p.SetOffset)
-			setParam(o.Duration, p.SetDuration)
+			// Don't set offset/duration in whisper params since we handle chunking ourselves
 			setParam(o.InitialPrompt, p.SetInitialPrompt)
 		},
 	)
@@ -99,14 +101,24 @@ func (s *TranscribeServiceImpl) TranscribeWav(
 	}
 
 	// Create PCM task and WAV wrapper
-	pcmTask := whisper_lib.NewPCMTranscribeTask(whisperCtx)
 	var defaultWindowSize = time.Second * 30
 
 	if o.WindowSize != nil && *o.WindowSize > 0 {
 		defaultWindowSize = *o.WindowSize
 	}
 
-	wavTask := whisper_lib.NewWavTranscribeTask(pcmTask, defaultWindowSize)
+	// Get offset and duration from options for virtual offset calculation
+	var globalOffset time.Duration
+	if o.Offset != nil {
+		globalOffset = *o.Offset
+	}
+	var globalDuration time.Duration
+	if o.Duration != nil {
+		globalDuration = *o.Duration
+	}
+
+	pcmTask := whisper_lib.NewPCMTranscribeTask(whisperCtx, s.logger, globalOffset, globalDuration)
+	wavTask := whisper_lib.NewWavTranscribeTask(pcmTask, defaultWindowSize, s.logger, globalOffset, globalDuration)
 	wavTask.Start(ctx, file)
 
 	return wavTask, nil
