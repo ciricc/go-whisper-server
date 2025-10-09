@@ -65,6 +65,9 @@ message WhisperParams {
   
   // Initial prompt
   google.protobuf.StringValue initial_prompt = 15;
+  
+  // No context
+  google.protobuf.BoolValue no_context = 16;
 }
 
 message File {

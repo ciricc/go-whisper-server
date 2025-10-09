@@ -213,8 +213,8 @@ tasks:
   download-model:
     desc: Download model using go-model-download example CLI
     cmds:
-      - mkdir -p models
-      - go-model-download -out ./models {{if .MODELS}}{{.MODELS}}{{else}}{{.MODEL}}{{end}}
+      - mkdir -p domain
+      - go-model-download -out ./domain {{if .MODELS}}{{.MODELS}}{{else}}{{.MODEL}}{{end}}
   archive:
     desc: Archive the project
     cmds:

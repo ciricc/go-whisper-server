@@ -53,7 +53,7 @@ func (s *TranscribeServiceImpl) TranscribeWav(
 ) (whisper_lib.WavTranscribeTask, error) {
 	o := buildOpts(TranscribeOpts{
 		SplitOnWord: lo.ToPtr(true),
-		NoContext:   lo.ToPtr(false),
+		NoContext:   lo.ToPtr(true),
 		Temperature: lo.ToPtr(float32(0.0)),
 	}, opts...)
 

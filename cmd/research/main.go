@@ -33,7 +33,7 @@ type ReportMetrics = benchreport.ReportMetrics
 
 func main() {
 	var (
-		modelPath     = flag.String("model", "models/ggml-large-v3-turbo.bin", "path to ggml model file")
+		modelPath     = flag.String("model", "domain/ggml-large-v3-turbo.bin", "path to ggml model file")
 		wavPath       = flag.String("wav", "testdata/out.wav", "path to 16 kHz mono 16-bit PCM WAV file")
 		language      = flag.String("lang", "ru", "language code (e.g., ru)")
 		threads       = flag.Int("threads", runtime.NumCPU(), "number of decoder threads to use")
@@ -168,6 +168,14 @@ func main() {
 	}
 
 	avgProcSec, avgRTF := averageRuns(runs)
+	// Recompute average RTF from per-run values so single-stream cost is non-zero
+	if len(runs) > 0 {
+		var rtfSum float64
+		for _, r := range runs {
+			rtfSum += r.RealTimeFactor
+		}
+		avgRTF = rtfSum / float64(len(runs))
+	}
 
 	cpuModel := detectCPUModel()
 	gpuName := detectGPUName(*useGPU, *gpuDevice)
@@ -219,41 +227,42 @@ func main() {
 		},
 	}
 
-	// Throughput/cost with concurrency
-	if *concurrency > 1 {
-		// Total audio hours processed = total runs * wav duration hours
-		wavHours := wavDur / 3600.0
-		v2.Metrics.TotalAudioHoursProcessed = float64(len(runs)) * wavHours
-		// Compute wall time precisely using elapsed clock of the concurrent phase.
-		// Recompute here from the first and last timestamps of runs is not available,
-		// so we rely on measured elapsed clock in the block above. For simplicity,
-		// we conservatively approximate as max( sum(proc)/concurrency, avg(proc) ).
-		var sumProc float64
-		var maxProc float64
-		for _, r := range runs {
-			sumProc += r.ProcessingSeconds
-			if r.ProcessingSeconds > maxProc {
-				maxProc = r.ProcessingSeconds
-			}
+	// Throughput/cost: compute for any concurrency
+	// Total audio hours processed = total runs * wav duration hours
+	wavHours := wavDur / 3600.0
+	v2.Metrics.TotalAudioHoursProcessed = float64(len(runs)) * wavHours
+	// Compute wall time:
+	// - For concurrency > 1: approximate as max( sum(proc)/concurrency, max(proc) )
+	// - For single-stream: wall time is sum of per-run processing seconds
+	var sumProc float64
+	var maxProc float64
+	for _, r := range runs {
+		sumProc += r.ProcessingSeconds
+		if r.ProcessingSeconds > maxProc {
+			maxProc = r.ProcessingSeconds
 		}
+	}
+	if *concurrency > 1 {
 		approx := sumProc / float64(*concurrency)
 		if maxProc > approx {
 			v2.Metrics.WallSecondsTotal = maxProc
 		} else {
 			v2.Metrics.WallSecondsTotal = approx
 		}
-		if v2.Metrics.WallSecondsTotal > 0 {
-			v2.Metrics.ThroughputAudioHoursPerWallHour = v2.Metrics.TotalAudioHoursProcessed / (v2.Metrics.WallSecondsTotal / 3600.0)
-		}
-		if *monthlyPrice > 0 && v2.Metrics.ThroughputAudioHoursPerWallHour > 0 {
-			// Prefer throughput-based cost: hourly price / throughput
-			hourly := *monthlyPrice / (30.0 * 24.0)
+	} else {
+		v2.Metrics.WallSecondsTotal = sumProc
+	}
+	if v2.Metrics.WallSecondsTotal > 0 {
+		v2.Metrics.ThroughputAudioHoursPerWallHour = v2.Metrics.TotalAudioHoursProcessed / (v2.Metrics.WallSecondsTotal / 3600.0)
+	}
+	// Prefer throughput-based cost when available; fallback to RTF if not
+	if *monthlyPrice > 0 {
+		hourly := *monthlyPrice / (30.0 * 24.0)
+		if v2.Metrics.ThroughputAudioHoursPerWallHour > 0 {
 			v2.Metrics.CostPerAudioHourUSD = hourly / v2.Metrics.ThroughputAudioHoursPerWallHour
-		} else {
+		} else if avgRTF > 0 {
 			v2.Metrics.CostPerAudioHourUSD = costPerAudioHour(*monthlyPrice, avgRTF)
 		}
-	} else {
-		v2.Metrics.CostPerAudioHourUSD = costPerAudioHour(*monthlyPrice, avgRTF)
 	}
 
 	// Emit only v2 JSON (no legacy)

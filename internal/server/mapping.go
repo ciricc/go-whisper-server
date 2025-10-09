@@ -75,5 +75,9 @@ func mapWhisperParamsToTranscribeOpts(
 		transcribeOpts = append(transcribeOpts, transcribe_svc.WithInitialPrompt(whisperParams.GetInitialPrompt().GetValue()))
 	}
 
+	if whisperParams.GetNoContext() != nil {
+		transcribeOpts = append(transcribeOpts, transcribe_svc.WithNoContext(whisperParams.GetNoContext().GetValue()))
+	}
+
 	return transcribeOpts
 }

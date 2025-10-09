@@ -19,7 +19,7 @@ import (
 
 func main() {
 	var (
-		modelPath = flag.String("model", "models/ggml-large-v3-turbo.bin", "path to whisper ggml model")
+		modelPath = flag.String("model", "domain/ggml-large-v3-turbo.bin", "path to whisper ggml model")
 	)
 
 	flag.Parse()

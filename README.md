@@ -51,7 +51,7 @@ Edit `config.yaml` to point at the model you want and choose the listen address.
 server:
   address: ":50051"
 model:
-  path: "models/ggml-large-v3-turbo.bin"
+  path: "domain/ggml-large-v3-turbo.bin"
   language: "en"
   sample_rate_hz: 16000
 ```
@@ -106,7 +106,7 @@ You should see streaming segment lines:
 This does not use gRPC. It opens your microphone, runs whisper locally, and prints segments.
 
 ```bash
-go run ./cmd/mic -model models/ggml-large-v3-turbo.bin
+go run ./cmd/mic -model domain/ggml-large-v3-turbo.bin
 ```
 
 Notes

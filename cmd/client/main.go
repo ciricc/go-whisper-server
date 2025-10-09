@@ -15,6 +15,7 @@ import (
 	transcriberv1 "github.com/ciricc/go-whisper-server/pkg/proto/transcriber/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -58,20 +59,24 @@ func main() {
 	defer cancel()
 
 	resp, err := transcriber.TranscribeWav(ctx, &transcriberv1.TranscribeWavRequest{
-		Language: "en",
+		Language: "ru",
 		Wav_16KFile: &transcriberv1.File{
 			File: &transcriberv1.File_Bytes{
 				Bytes: wavData,
 			},
 		},
 		WhisperParams: &transcriberv1.WhisperParams{
-			SplitOnWord:         wrapperspb.Bool(true),
-			BeamSize:            wrapperspb.Int32(20),
-			Temperature:         wrapperspb.Float(0.0),
-			TemperatureFallback: wrapperspb.Float(0.2),
-			MaxTokensPerSegment: wrapperspb.Int32(128),
-			TokenThreshold:      wrapperspb.Float(0.2),
-			Translate:           wrapperspb.Bool(false),
+			SplitOnWord: wrapperspb.Bool(true),
+			// Temperature:         wrapperspb.Float(0.0),
+			// TemperatureFallback: wrapperspb.Float(0.2),
+			// MaxTokensPerSegment: wrapperspb.Int32(128),
+			TokenThreshold: wrapperspb.Float(0.5),
+			Translate:      wrapperspb.Bool(false),
+			InitialPrompt:  wrapperspb.String(`Это расшифровка русской речи. Используй правильную пунктуацию: запятые, точки, вопросительные и восклицательные знаки. Начинай предложения с заглавной буквы. (молчит)`),
+			Vad:            wrapperspb.Bool(true),
+		},
+		TranscribeWavParams: &transcriberv1.TranscribeWavParams{
+			WindowSize: durationpb.New(time.Minute * 2),
 		},
 	})
 	if err != nil {
@@ -89,9 +94,11 @@ func main() {
 		}
 
 		fmt.Printf(
-			"[%6d -> %6d] %s\n",
+			"[%6d(%s) -> %d(%s)] %s\n",
 			seg.GetStart().AsDuration().Milliseconds(),
+			seg.GetStart().AsDuration().String(),
 			seg.GetEnd().AsDuration().Milliseconds(),
+			seg.GetEnd().AsDuration().String(),
 			seg.GetText(),
 		)
 	}

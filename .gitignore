@@ -3,3 +3,5 @@ models/
 third_party/
 vendor/
 testdata/
+reports/
+research/
