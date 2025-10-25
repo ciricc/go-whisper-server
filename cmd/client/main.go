@@ -81,8 +81,8 @@ func main() {
 			Translate:      wrapperspb.Bool(false),
 			InitialPrompt:  wrapperspb.String(`Это расшифровка русской речи. Используй правильную пунктуацию: запятые, точки, вопросительные и восклицательные знаки. Начинай предложения с заглавной буквы. (молчит)`),
 			// Vad:            wrapperspb.Bool(true),
-			Duration: durationpb.New(time.Minute * 2),  // Тестируем 2 минуты
-			Offset:   durationpb.New(time.Second * 20), // Начинаем с 1 минуты
+			// Duration: durationpb.New(time.Minute * 2),  // Тестируем 2 минуты
+			// Offset:   durationpb.New(time.Second * 20), // Начинаем с 1 минуты
 			// NoContext: wrapperspb.Bool(false),
 		},
 		TranscribeWavParams: &transcriberv1.TranscribeWavParams{

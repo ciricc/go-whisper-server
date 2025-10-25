@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,6 +11,8 @@ import (
 	"github.com/ciricc/go-whisper-server/internal/service/transcribe_svc"
 	transcriberv1 "github.com/ciricc/go-whisper-server/pkg/proto/transcriber/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -112,6 +115,10 @@ func (s *TranscriberServer) TranscribeWav(
 		)...,
 	)
 	if err != nil {
+		if errors.Is(err, transcribe_svc.ErrTranscribeServiceBusy) {
+			return status.Error(codes.ResourceExhausted, "transcribe service is busy")
+		}
+
 		s.Log.ErrorContext(stream.Context(), "Failed to create transcription task", "error", err)
 		return err
 	}

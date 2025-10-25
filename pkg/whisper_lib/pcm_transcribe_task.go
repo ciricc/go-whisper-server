@@ -6,11 +6,22 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ciricc/go-whisper-server/internal/model/segment"
 	"github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper"
 	"golang.org/x/sync/errgroup"
 )
+
+// sanitizeUTF8 removes invalid UTF-8 sequences from text to prevent gRPC marshaling errors
+func sanitizeUTF8(text string) string {
+	if utf8.ValidString(text) {
+		return text
+	}
+
+	// Replace invalid UTF-8 sequences with replacement character
+	return string([]rune(text))
+}
 
 // PCMTranscribeTask is a task that transcribes PCM data.
 // It is used to transcribe PCM data from a file or a stream of PCM data.
@@ -165,7 +176,7 @@ func (t *PCMTranscribeTask) processAudioPCM(
 				seg := segment.NewSegment(
 					segStart,
 					segEnd,
-					s.Text,
+					sanitizeUTF8(s.Text),
 					s.SpeakerTurnNext,
 				)
 				t.segCh <- seg

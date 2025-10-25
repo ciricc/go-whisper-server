@@ -1,6 +1,11 @@
 server:
-  address: ":50051"
+  address: ":50150"
 model:
   path: "models/ggml-large-v3-turbo.bin"
   language: "en"
   sample_rate_hz: 16000
+transcribe:
+  max_concurrency: 1
+health:
+  enabled: true
+  load_threshold: 0.8  # Service becomes unhealthy when >80% of capacity is used

@@ -2,14 +2,20 @@ package transcribe_svc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"time"
 
+	"github.com/ciricc/go-whisper-server/internal/monitor"
 	"github.com/ciricc/go-whisper-server/pkg/whisper_lib"
 	"github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper"
 	"github.com/samber/lo"
+)
+
+var (
+	ErrTranscribeServiceBusy = errors.New("transcribe service is busy")
 )
 
 type TranscribeService interface {
@@ -24,15 +30,18 @@ type TranscribeService interface {
 type TranscribeServiceImpl struct {
 	whisperModel *whisper.ModelContext
 	logger       *slog.Logger
+	loadMonitor  monitor.LoadMonitor
 }
 
 func NewTranscribeService(
 	whisperModel *whisper.ModelContext,
 	logger *slog.Logger,
+	loadMonitor monitor.LoadMonitor,
 ) *TranscribeServiceImpl {
 	return &TranscribeServiceImpl{
 		whisperModel: whisperModel,
 		logger:       logger,
+		loadMonitor:  loadMonitor,
 	}
 }
 
@@ -54,6 +63,12 @@ func (s *TranscribeServiceImpl) TranscribeWav(
 	file io.ReadSeeker,
 	opts ...TranscribeOpt,
 ) (whisper_lib.WavTranscribeTask, error) {
+	if !s.loadMonitor.TryAcquire() {
+		return nil, fmt.Errorf("transcribe service is busy")
+	}
+
+	s.logger.DebugContext(ctx, "Acquired task slot")
+
 	o := buildOpts(TranscribeOpts{
 		SplitOnWord: lo.ToPtr(true),
 		NoContext:   lo.ToPtr(true),
@@ -120,6 +135,12 @@ func (s *TranscribeServiceImpl) TranscribeWav(
 	pcmTask := whisper_lib.NewPCMTranscribeTask(whisperCtx, s.logger, globalOffset, globalDuration)
 	wavTask := whisper_lib.NewWavTranscribeTask(pcmTask, defaultWindowSize, s.logger, globalOffset, globalDuration)
 	wavTask.Start(ctx, file)
+
+	go func() {
+		<-wavTask.Done()
+		s.logger.DebugContext(ctx, "Wav task done")
+		s.loadMonitor.Release()
+	}()
 
 	return wavTask, nil
 }
