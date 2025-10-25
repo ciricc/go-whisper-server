@@ -1,0 +1,40 @@
+# Минимальная конфигурация OpenTelemetry Collector для локальной разработки
+# Запуск: docker run -p 4318:4318 -p 8888:8888 -v $(pwd)/simple-collector-config.yaml:/etc/otel-collector-config.yaml otel/opentelemetry-collector-contrib:latest --config=/etc/otel-collector-config.yaml
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 10s
+
+exporters:
+  # Экспорт метрик в Prometheus формат
+  prometheus:
+    endpoint: "0.0.0.0:8888"
+    namespace: whisper_grpc
+    send_timestamps: true
+    metric_expiration: 5m
+
+  # Debug exporter для отладки
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus, debug]

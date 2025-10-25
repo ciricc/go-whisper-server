@@ -12,6 +12,9 @@ import (
 	"github.com/ciricc/go-whisper-server/pkg/whisper_lib"
 	"github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper"
 	"github.com/samber/lo"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 var (
@@ -31,6 +34,12 @@ type TranscribeServiceImpl struct {
 	whisperModel *whisper.ModelContext
 	logger       *slog.Logger
 	loadMonitor  monitor.LoadMonitor
+
+	// OpenTelemetry metrics
+	transcriptionCounter    metric.Int64Counter
+	transcriptionDuration   metric.Float64Histogram
+	activeTranscriptions    metric.Int64UpDownCounter
+	transcriptionErrors     metric.Int64Counter
 }
 
 func NewTranscribeService(
@@ -38,11 +47,51 @@ func NewTranscribeService(
 	logger *slog.Logger,
 	loadMonitor monitor.LoadMonitor,
 ) *TranscribeServiceImpl {
-	return &TranscribeServiceImpl{
-		whisperModel: whisperModel,
-		logger:       logger,
-		loadMonitor:  loadMonitor,
+	meter := otel.Meter("whisper-transcriber")
+
+	// Create metrics
+	transcriptionCounter, _ := meter.Int64Counter(
+		"transcription.requests.total",
+		metric.WithDescription("Total number of transcription requests"),
+		metric.WithUnit("{request}"),
+	)
+
+	transcriptionDuration, _ := meter.Float64Histogram(
+		"transcription.duration",
+		metric.WithDescription("Duration of transcription requests"),
+		metric.WithUnit("s"),
+	)
+
+	activeTranscriptions, _ := meter.Int64UpDownCounter(
+		"transcription.active",
+		metric.WithDescription("Number of active transcriptions"),
+		metric.WithUnit("{transcription}"),
+	)
+
+	transcriptionErrors, _ := meter.Int64Counter(
+		"transcription.errors.total",
+		metric.WithDescription("Total number of transcription errors"),
+		metric.WithUnit("{error}"),
+	)
+
+	svc := &TranscribeServiceImpl{
+		whisperModel:            whisperModel,
+		logger:                  logger,
+		loadMonitor:             loadMonitor,
+		transcriptionCounter:    transcriptionCounter,
+		transcriptionDuration:   transcriptionDuration,
+		activeTranscriptions:    activeTranscriptions,
+		transcriptionErrors:     transcriptionErrors,
 	}
+
+	// Initialize metrics with zero values to ensure they appear in Prometheus
+	ctx := context.Background()
+	transcriptionCounter.Add(ctx, 0)
+	transcriptionErrors.Add(ctx, 0)
+	transcriptionDuration.Record(ctx, 0)
+	activeTranscriptions.Add(ctx, 0)
+
+	return svc
 }
 
 func setParam[T any](opt *T, setter func(opt T)) {
@@ -63,7 +112,17 @@ func (s *TranscribeServiceImpl) TranscribeWav(
 	file io.ReadSeeker,
 	opts ...TranscribeOpt,
 ) (whisper_lib.WavTranscribeTask, error) {
+	startTime := time.Now()
+
+	// Record metrics
+	s.transcriptionCounter.Add(ctx, 1)
+	s.activeTranscriptions.Add(ctx, 1)
+
 	if !s.loadMonitor.TryAcquire() {
+		s.activeTranscriptions.Add(ctx, -1)
+		s.transcriptionErrors.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("error.type", "service_busy"),
+		))
 		return nil, fmt.Errorf("transcribe service is busy")
 	}
 
@@ -138,7 +197,20 @@ func (s *TranscribeServiceImpl) TranscribeWav(
 
 	go func() {
 		<-wavTask.Done()
-		s.logger.DebugContext(ctx, "Wav task done")
+		duration := time.Since(startTime).Seconds()
+
+		// Record completion metrics
+		s.transcriptionDuration.Record(ctx, duration)
+		s.activeTranscriptions.Add(ctx, -1)
+
+		// Check if there was an error
+		if err := wavTask.Wait(); err != nil {
+			s.transcriptionErrors.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("error.type", "transcription_failed"),
+			))
+		}
+
+		s.logger.DebugContext(ctx, "Wav task done", "duration", duration)
 		s.loadMonitor.Release()
 	}()
 

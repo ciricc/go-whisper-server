@@ -6,8 +6,10 @@ import (
 
 	"github.com/ciricc/go-whisper-server/internal/app"
 	transcriberv1 "github.com/ciricc/go-whisper-server/pkg/proto/transcriber/v1"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/reflection"
 )
 
 const MB = 1024 * 1024
@@ -29,10 +31,13 @@ func main() {
 	grpcServer := grpc.NewServer(
 		grpc.MaxRecvMsgSize(maxMsgSize),
 		grpc.MaxSendMsgSize(maxMsgSize),
+		// Add OpenTelemetry gRPC interceptors for tracing
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 	)
 
 	// Register transcriber service
 	transcriberv1.RegisterTranscriberServer(grpcServer, application.Server)
+	reflection.Register(grpcServer)
 
 	// Register health check service if enabled
 	if application.HealthChecker != nil {

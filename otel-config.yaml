@@ -1,0 +1,48 @@
+# OpenTelemetry SDK configuration file for debugging
+# This config exports metrics to stdout to verify they are being collected
+file_format: "1.0-rc.2"
+
+disabled: false
+log_level: debug
+
+resource:
+  attributes:
+    - name: service.name
+      value: "whisper-grpc-transcriber"
+    - name: service.version
+      value: "1.0.0"
+    - name: deployment.environment
+      value: "development"
+
+tracer_provider:
+  processors:
+    - batch:
+        schedule_delay: 5000
+        export_timeout: 30000
+        max_queue_size: 2048
+        max_export_batch_size: 512
+        exporter:
+          otlp:
+            endpoint: http://localhost:4318
+            protocol: http/protobuf
+            timeout: 10000
+            compression: gzip
+            insecure: true
+
+meter_provider:
+  readers:
+    - periodic:
+        interval: 10000 # Export every 10 seconds
+        timeout: 30000
+        exporter:
+          otlp:
+            endpoint: http://localhost:9090/api/v1/otlp/v1/metrics
+            protocol: http/protobuf
+            timeout: 10000
+            compression: gzip
+            insecure: true
+
+propagator:
+  composite:
+    - tracecontext
+    - baggage

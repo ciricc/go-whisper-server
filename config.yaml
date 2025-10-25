@@ -8,4 +8,4 @@ transcribe:
   max_concurrency: 1
 health:
   enabled: true
-  load_threshold: 0.8  # Service becomes unhealthy when >80% of capacity is used
+  load_threshold: 0.8 # Service becomes unhealthy when >80% of capacity is used
